@@ -1,0 +1,10 @@
+{
+  "name": "Hum & Keyboard Score Transcriber",
+  "description": "Real-time vocal humming and keyboard/MIDI score transcription studio into numbered musical notation with interactive playback and MIDI export.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
