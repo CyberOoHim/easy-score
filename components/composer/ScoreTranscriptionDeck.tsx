@@ -307,6 +307,19 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
     return 6.0;
   });
 
+  const [stabilizerStrength, setStabilizerStrength] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('hum_to_score_pitch_stabilizer');
+        if (saved) {
+          const parsed = parseFloat(saved);
+          if (!isNaN(parsed) && parsed >= 0 && parsed <= 1) return parsed;
+        }
+      } catch {}
+    }
+    return 0.50;
+  });
+
   // =========================================================================
   // KEYBOARD MODE STATES
   // =========================================================================
@@ -426,6 +439,23 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
     }
     if (noteSegmenterRef.current) {
       noteSegmenterRef.current.updateConfig({ silenceThresholdRms: effectiveSilenceThreshold });
+    }
+  }, []);
+
+  // Dynamic pitch stabilizer strength adjustment
+  const handleStabilizerChange = useCallback((newStrength: number) => {
+    const clamped = Math.max(0, Math.min(1, Math.round(newStrength * 100) / 100));
+    setStabilizerStrength(clamped);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('hum_to_score_pitch_stabilizer', String(clamped));
+      } catch {}
+    }
+    if (pitchDetectorRef.current) {
+      pitchDetectorRef.current.setStabilizerStrength(clamped);
+    }
+    if (noteSegmenterRef.current) {
+      noteSegmenterRef.current.setStabilizerStrength(clamped);
     }
   }, []);
 
@@ -894,6 +924,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
         sampleRate: ctx.sampleRate,
         ...activePreset.pitchConfig,
         silenceThreshold: effectiveSilenceThreshold,
+        stabilizerStrength,
       });
       pitchDetectorRef.current = pitchDetector;
 
@@ -928,7 +959,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
       setIsPracticingPitch(false);
       alert('無法啟動麥克風，請檢查瀏覽器麥克風權限。');
     }
-  }, [activePreset, micGain, stopAllPipelines, drawPracticeOscilloscope]);
+  }, [activePreset, micGain, stabilizerStrength, stopAllPipelines, drawPracticeOscilloscope]);
 
   const stopPitchPractice = useCallback(() => {
     stopAllPipelines();
@@ -1055,6 +1086,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
           sampleRate: ctx.sampleRate,
           ...activePreset.pitchConfig,
           silenceThreshold: effectiveSilenceThreshold,
+          stabilizerStrength,
         });
         pitchDetectorRef.current = pitchDetector;
 
@@ -1062,6 +1094,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
           sampleRate: ctx.sampleRate,
           ...activePreset.onsetConfig,
           silenceThresholdRms: effectiveSilenceThreshold,
+          stabilizerStrength,
         });
         noteSegmenterRef.current = segmenter;
 
@@ -1130,6 +1163,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
     audioEngine,
     activePreset,
     micGain,
+    stabilizerStrength,
     drawOscilloscope,
     stopAllPipelines,
   ]);
@@ -1859,6 +1893,91 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
                   </span>
                 </div>
 
+                {/* Pitch Stabilizer Slider & Quick Presets */}
+                <div className="flex flex-col gap-2 pt-2 border-t border-zinc-200/60 dark:border-zinc-800/60">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <SlidersHorizontal className="w-3.5 h-3.5 text-amber-500" />
+                      <span className="text-xs font-bold text-zinc-700 dark:text-zinc-300">
+                        音準穩定度 (Pitch Stabilizer):
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`text-[11px] font-bold px-2 py-0.5 rounded-md ${
+                          stabilizerStrength <= 0.3
+                            ? 'bg-blue-500/15 text-blue-500 dark:text-blue-400 border border-blue-500/30'
+                            : stabilizerStrength <= 0.65
+                              ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
+                              : 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
+                        }`}
+                      >
+                        {stabilizerStrength <= 0.3
+                          ? '⚡ 即時靈敏 (Fast)'
+                          : stabilizerStrength <= 0.65
+                            ? '🎯 標準平穩 (Smooth)'
+                            : '🛡️ 極致防抖 (Ultra)'}
+                      </span>
+                      <span className="text-xs font-mono font-black text-amber-500 w-12 text-right">
+                        {Math.round(stabilizerStrength * 100)}%
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <span className="text-[10px] text-zinc-400 shrink-0">即時靈敏 (0%)</span>
+                    <input
+                      id="deck-hum-stabilizer-slider"
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.05"
+                      value={stabilizerStrength}
+                      onChange={e => handleStabilizerChange(parseFloat(e.target.value))}
+                      className="accent-amber-500 flex-1 h-2 bg-zinc-300 dark:bg-zinc-700 rounded-lg cursor-pointer"
+                    />
+                    <span className="text-[10px] text-zinc-400 shrink-0">極致防抖 (100%)</span>
+                  </div>
+
+                  {/* Quick Preset Chips */}
+                  <div className="flex items-center gap-2 pt-0.5 flex-wrap">
+                    <span className="text-[10px] text-zinc-500 shrink-0 font-medium">快捷預設:</span>
+                    <button
+                      type="button"
+                      onClick={() => handleStabilizerChange(0.25)}
+                      className={`px-2 py-0.5 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
+                        Math.abs(stabilizerStrength - 0.25) < 0.04
+                          ? 'bg-amber-500 text-zinc-950 font-black shadow-xs'
+                          : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700'
+                      }`}
+                    >
+                      輕度 25% (裝飾音 / 快歌)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleStabilizerChange(0.50)}
+                      className={`px-2 py-0.5 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
+                        Math.abs(stabilizerStrength - 0.50) < 0.04
+                          ? 'bg-amber-500 text-zinc-950 font-black shadow-xs'
+                          : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700'
+                      }`}
+                    >
+                      標準 50% (平衡防抖 · 預設)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleStabilizerChange(0.80)}
+                      className={`px-2 py-0.5 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
+                        Math.abs(stabilizerStrength - 0.80) < 0.04
+                          ? 'bg-amber-500 text-zinc-950 font-black shadow-xs'
+                          : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700'
+                      }`}
+                    >
+                      高強度 80% (鎖定防抖 · 長音)
+                    </button>
+                  </div>
+                </div>
+
                 {/* PRE-RECORDING LIVE PITCH VISUAL DETECTOR & PRACTICE PANEL */}
                 <div className="flex flex-col gap-3 pt-3 mt-1 border-t border-zinc-200/80 dark:border-zinc-800/80">
                   <div className="flex items-center justify-between flex-wrap gap-2">
@@ -2045,6 +2164,85 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
                                 ? '⚠️ 音量過大 (請調降增益)'
                                 : '✅ 收音良好'}
                           </span>
+                        </div>
+                      </div>
+
+                      {/* Real-time Pitch Stabilizer Slider in Practice Card */}
+                      <div className="flex flex-col gap-2 p-2.5 bg-zinc-900/90 rounded-xl border border-zinc-800/90">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5 text-xs text-zinc-300 font-bold">
+                            <SlidersHorizontal className="w-3.5 h-3.5 text-amber-400" />
+                            <span>即時防抖強度 (Pitch Stabilizer)</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                                stabilizerStrength <= 0.3
+                                  ? 'bg-blue-500/20 text-blue-300'
+                                  : stabilizerStrength <= 0.65
+                                    ? 'bg-emerald-500/20 text-emerald-300'
+                                    : 'bg-amber-500/20 text-amber-300'
+                              }`}
+                            >
+                              {stabilizerStrength <= 0.3
+                                ? '⚡ 靈敏'
+                                : stabilizerStrength <= 0.65
+                                  ? '🎯 平穩'
+                                  : '🛡️ 極致防抖'}
+                            </span>
+                            <span className="text-xs font-mono font-black text-amber-400">
+                              {Math.round(stabilizerStrength * 100)}%
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2.5">
+                          <span className="text-[9px] text-zinc-500">0%</span>
+                          <input
+                            id="deck-practice-stabilizer-slider"
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value={stabilizerStrength}
+                            onChange={e => handleStabilizerChange(parseFloat(e.target.value))}
+                            className="accent-amber-500 flex-1 h-1.5 bg-zinc-800 rounded-lg cursor-pointer"
+                          />
+                          <span className="text-[9px] text-zinc-500">100%</span>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => handleStabilizerChange(0.25)}
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer ${
+                                Math.abs(stabilizerStrength - 0.25) < 0.04
+                                  ? 'bg-amber-400 text-zinc-950 font-black'
+                                  : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
+                              }`}
+                            >
+                              25%
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleStabilizerChange(0.50)}
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer ${
+                                Math.abs(stabilizerStrength - 0.50) < 0.04
+                                  ? 'bg-amber-400 text-zinc-950 font-black'
+                                  : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
+                              }`}
+                            >
+                              50%
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleStabilizerChange(0.80)}
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer ${
+                                Math.abs(stabilizerStrength - 0.80) < 0.04
+                                  ? 'bg-amber-400 text-zinc-950 font-black'
+                                  : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
+                              }`}
+                            >
+                              80%
+                            </button>
+                          </div>
                         </div>
                       </div>
 

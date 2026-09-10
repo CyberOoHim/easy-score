@@ -19,6 +19,7 @@ export interface OnsetDetectorConfig {
   pitchStabilityCents: number;       // Max pitch deviation in cents to consider note continuous (default: 35 cents)
   legatoPitchThresholdCents: number; // Minimum pitch change in cents to trigger legato note transition (default: 75 cents)
   minNoteDurationMs: number;         // Minimum duration for a note to be kept (default: 60ms)
+  stabilizerStrength?: number;       // Pitch stabilizer strength 0.0 to 1.0 (default: 0.50)
 }
 
 export const DEFAULT_ONSET_CONFIG: Readonly<OnsetDetectorConfig> = {
@@ -32,6 +33,7 @@ export const DEFAULT_ONSET_CONFIG: Readonly<OnsetDetectorConfig> = {
   pitchStabilityCents: 35,
   legatoPitchThresholdCents: 110,
   minNoteDurationMs: 60,
+  stabilizerStrength: 0.50,
 };
 
 export type NoteState = 'SILENCE' | 'ATTACK' | 'SUSTAIN' | 'RELEASE';
@@ -274,7 +276,9 @@ export class OnsetDetector {
     // 6. Legato Pitch Change Check (Transition without sharp energy attack)
     if (!isSilent && !isOnset && pitchHz !== null && this.lastStablePitchHz !== null) {
       const centsDiff = Math.abs(1200 * Math.log2(pitchHz / this.lastStablePitchHz));
-      if (centsDiff >= legatoPitchThresholdCents && canTriggerOnset) {
+      const strength = Math.max(0, Math.min(1, this.config.stabilizerStrength ?? 0.50));
+      const effectiveLegatoThreshold = legatoPitchThresholdCents * (1 + strength * 0.35);
+      if (centsDiff >= effectiveLegatoThreshold && canTriggerOnset) {
         isLegatoChange = true;
         isOnset = true;
         this.lastOnsetTimeMs = timestampMs;
@@ -333,6 +337,7 @@ export class OnsetDetector {
  * Turns consecutive audio frame analyses into discrete RawNoteSegment[] (notes and rests).
  */
 export class NoteSegmenter {
+  private config: OnsetDetectorConfig;
   private onsetDetector: OnsetDetector;
   private completedSegments: RawNoteSegment[] = [];
   private activeSegment: {
@@ -344,11 +349,18 @@ export class NoteSegmenter {
   } | null = null;
 
   constructor(options?: Partial<OnsetDetectorConfig>) {
-    this.onsetDetector = new OnsetDetector(options);
+    this.config = { ...DEFAULT_ONSET_CONFIG, ...options };
+    this.onsetDetector = new OnsetDetector(this.config);
   }
 
   public updateConfig(options: Partial<OnsetDetectorConfig>): void {
+    this.config = { ...this.config, ...options };
     this.onsetDetector.updateConfig(options);
+  }
+
+  public setStabilizerStrength(strength: number): void {
+    this.config.stabilizerStrength = strength;
+    this.onsetDetector.updateConfig({ stabilizerStrength: strength });
   }
 
   public reset(): void {
@@ -437,15 +449,35 @@ export class NoteSegmenter {
       // Energy-weighted pitch extraction:
       // Filter out low-energy attack/release transients if we have sufficient samples (>= 4)
       let candidateIndices = pitches.map((_, idx) => idx);
+      const strength = Math.max(0, Math.min(1, this.config.stabilizerStrength ?? 0.50));
+
       if (pitches.length >= 4 && weights.length === pitches.length) {
         let maxWeight = 0;
         for (let i = 0; i < weights.length; i++) {
           if (weights[i] > maxWeight) maxWeight = weights[i];
         }
-        const energyFloor = maxWeight * 0.20;
+        // Higher stabilizer strength raises the steady-state energy floor from 15% up to 35%
+        const energyFloorRatio = 0.15 + strength * 0.20;
+        const energyFloor = maxWeight * energyFloorRatio;
         const robustIndices = candidateIndices.filter(i => weights[i] >= energyFloor);
         if (robustIndices.length >= 2) {
           candidateIndices = robustIndices;
+        }
+      }
+
+      // Outlier pitch rejection: reject transient frames deviating excessively from median pitch
+      if (candidateIndices.length >= 4) {
+        const candidatePitches = candidateIndices.map(i => pitches[i]).sort((a, b) => a - b);
+        const roughMedian = candidatePitches[Math.floor(candidatePitches.length / 2)];
+        if (roughMedian > 0) {
+          const outlierThresholdCents = 75 + (1 - strength) * 45;
+          const inlierIndices = candidateIndices.filter(i => {
+            const devCents = Math.abs(1200 * Math.log2(pitches[i] / roughMedian));
+            return devCents <= outlierThresholdCents;
+          });
+          if (inlierIndices.length >= 2) {
+            candidateIndices = inlierIndices;
+          }
         }
       }
 
@@ -488,7 +520,8 @@ export class NoteSegmenter {
     };
 
     // Filter out micro-glitches under minimum duration if voiced
-    if (this.activeSegment.isSilence || durationMs >= 40) {
+    const minVoicedDuration = this.config.minNoteDurationMs ?? 60;
+    if (this.activeSegment.isSilence || durationMs >= minVoicedDuration) {
       this.completedSegments.push(segment);
       return segment;
     }

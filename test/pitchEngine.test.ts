@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import {
   PitchDetector,
+  PitchStabilizer,
   detectPitch,
   frequencyToMidi,
   midiToFrequency,
@@ -970,6 +971,205 @@ describe('Enhanced Vocal Pitch & Beat Length Accuracy (Hum-to-Score)', () => {
   });
 });
 
+describe('Pitch Stabilizer & Jitter Suppression Benchmarks', () => {
+  it('suppresses harmonic octave spikes using median filtering & octave guard', () => {
+    const stabilizer = new PitchStabilizer({ strength: 0.5 });
+
+    const makeResult = (freq: number): any => ({
+      frequency: freq,
+      probability: 0.95,
+      isPitched: true,
+      tau: 100,
+      rms: 0.2,
+      centsOffNearestMidi: 0,
+      nearestMidi: 69,
+      noteName: 'A4',
+    });
+
+    // 4 steady frames at 440 Hz
+    stabilizer.process(makeResult(440));
+    stabilizer.process(makeResult(440));
+    stabilizer.process(makeResult(440));
+    stabilizer.process(makeResult(440));
+
+    // Sudden 1-frame octave spike (880 Hz harmonic overtone)
+    const spikeOutput = stabilizer.process(makeResult(880));
+
+    // Octave guard / median filter should completely prevent jumping to A5 (880 Hz / MIDI 81)
+    assert.strictEqual(spikeOutput.nearestMidi, 69, 'Should remain locked to A4 (MIDI 69)');
+    assert.ok(
+      Math.abs((spikeOutput.frequency || 0) - 440) < 5,
+      `Frequency should stay near 440 Hz, got ${spikeOutput.frequency}`
+    );
+  });
+
+  it('smooths 6Hz micro-vibrato trajectory and reduces cents deviation variance', () => {
+    const stabilizer = new PitchStabilizer({ strength: 0.50 });
+    const makeResult = (freq: number): any => {
+      const info = getMidiNoteInfo(freq);
+      return {
+        frequency: freq,
+        probability: 0.95,
+        isPitched: true,
+        tau: 100,
+        rms: 0.2,
+        centsOffNearestMidi: info?.centsOff ?? 0,
+        nearestMidi: info?.midi ?? 69,
+        noteName: info?.noteName ?? 'A4',
+      };
+    };
+
+    // Synthesize 15 frames of ±25 cents 6Hz vibrato around 440Hz
+    const rawDeviations: number[] = [];
+    const stabilizedDeviations: number[] = [];
+
+    for (let i = 0; i < 15; i++) {
+      const centsShift = Math.sin((i / 15) * 2 * Math.PI * 2) * 25;
+      const freq = 440 * Math.pow(2, centsShift / 1200);
+      rawDeviations.push(centsShift);
+
+      const stabilized = stabilizer.process(makeResult(freq));
+      stabilizedDeviations.push(stabilized.centsOffNearestMidi);
+    }
+
+    // Peak deviation of stabilized cents should be substantially smaller than raw ±25 cents
+    const maxRaw = Math.max(...rawDeviations.map(Math.abs));
+    const maxStabilized = Math.max(...stabilizedDeviations.map(Math.abs));
+
+    assert.ok(
+      maxStabilized <= maxRaw * 0.60,
+      `Stabilizer should dampen vibrato peak: raw max=${maxRaw}, stabilized max=${maxStabilized}`
+    );
+  });
+
+  it('prevents boundary flip-flopping near semitone midpoint via Schmitt trigger hysteresis', () => {
+    // Middle C is MIDI 60 (261.63 Hz). C#4 is MIDI 61 (277.18 Hz).
+    // Midpoint is +50 cents (269.29 Hz).
+    const stabilizer = new PitchStabilizer({ strength: 0.50 });
+
+    const makeResult = (freq: number): any => {
+      const info = getMidiNoteInfo(freq);
+      return {
+        frequency: freq,
+        probability: 0.95,
+        isPitched: true,
+        tau: 100,
+        rms: 0.2,
+        centsOffNearestMidi: info?.centsOff ?? 0,
+        nearestMidi: info?.midi ?? 60,
+        noteName: info?.noteName ?? 'C4',
+      };
+    };
+
+    // Establish C4 first with 3 frames
+    stabilizer.process(makeResult(261.63));
+    stabilizer.process(makeResult(261.63));
+    stabilizer.process(makeResult(261.63));
+
+    // Now fluctuate right around the midpoint (+48 cents, +52 cents, +49 cents, +53 cents)
+    const testFrequencies = [
+      261.63 * Math.pow(2, 48 / 1200), // +48 cents (below midpoint) -> C4
+      261.63 * Math.pow(2, 52 / 1200), // +52 cents (above midpoint) -> would flip to C#4 without hysteresis
+      261.63 * Math.pow(2, 49 / 1200), // +49 cents -> would flip back to C4
+      261.63 * Math.pow(2, 53 / 1200), // +53 cents -> would flip back to C#4
+    ];
+
+    const lockedMidis: (number | null)[] = [];
+    for (const freq of testFrequencies) {
+      const res = stabilizer.process(makeResult(freq));
+      lockedMidis.push(res.nearestMidi);
+    }
+
+    // Because hysteresis threshold is 50 + (0.5 * 25) = 62.5 cents,
+    // all frames below 62.5 cents deviation MUST remain locked to C4 (MIDI 60)!
+    for (let i = 0; i < lockedMidis.length; i++) {
+      assert.strictEqual(
+        lockedMidis[i],
+        60,
+        `Frame ${i} falsely flipped to MIDI ${lockedMidis[i]} instead of staying locked to MIDI 60`
+      );
+    }
+  });
+
+  it('snaps quickly on deliberate melodic leaps without microtonal drag', () => {
+    const stabilizer = new PitchStabilizer({ strength: 0.80 });
+
+    const makeResult = (freq: number): any => {
+      const info = getMidiNoteInfo(freq);
+      return {
+        frequency: freq,
+        probability: 0.95,
+        isPitched: true,
+        tau: 100,
+        rms: 0.2,
+        centsOffNearestMidi: info?.centsOff ?? 0,
+        nearestMidi: info?.midi ?? 60,
+        noteName: info?.noteName ?? 'C4',
+      };
+    };
+
+    // Establish C4 (261.63 Hz)
+    stabilizer.process(makeResult(261.63));
+    stabilizer.process(makeResult(261.63));
+
+    // Deliberate leap to G4 (392.00 Hz, 7 semitones higher)
+    const leapOutput1 = stabilizer.process(makeResult(392.00));
+    const leapOutput2 = stabilizer.process(makeResult(392.00));
+
+    // EMA fast leap detection should immediately snap or catch up by frame 2
+    assert.ok(
+      Math.abs((leapOutput2.frequency || 0) - 392.00) < 5,
+      `Should snap cleanly to G4 (392 Hz) within 2 frames, got ${leapOutput2.frequency} Hz`
+    );
+    assert.strictEqual(leapOutput2.nearestMidi, 67, 'Should switch note to G4 (MIDI 67)');
+  });
+
+  it('allows dynamic strength adjustment in real time', () => {
+    const detector = new PitchDetector({ stabilizerStrength: 0.50 });
+    assert.strictEqual(detector.getStabilizerStrength(), 0.50);
+
+    detector.setStabilizerStrength(0.80);
+    assert.strictEqual(detector.getStabilizerStrength(), 0.80);
+
+    detector.updateConfig({ stabilizerStrength: 0.25 });
+    assert.strictEqual(detector.getStabilizerStrength(), 0.25);
+  });
+
+  it('trims onset pitch scoops with sustain-weighted NoteSegmenter stabilization', () => {
+    const sampleRate = 44100;
+    const frameSamples = 512;
+    const segmenter = new NoteSegmenter({
+      sampleRate,
+      stabilizerStrength: 0.80, // High stability
+    });
+
+    // 1. Initial 3 frames of low-energy attack scoop: C4 (261 Hz), RMS = 0.015 (quiet onset breath)
+    for (let i = 0; i < 3; i++) {
+      const scoopBuf = generateSineBuffer(261.63, frameSamples, sampleRate, 0.03);
+      segmenter.ingestFrame(scoopBuf, i * 15, 261.63, 0.5);
+    }
+
+    // 2. Main 10 frames of steady, high-energy sustained target note: G4 (392 Hz), RMS = 0.35 (loud vowel)
+    for (let i = 3; i < 13; i++) {
+      const sustainBuf = generateSineBuffer(392.00, frameSamples, sampleRate, 0.7);
+      segmenter.ingestFrame(sustainBuf, i * 15, 392.00, 0.98);
+    }
+
+    // Finalize segment and clean via pipeline
+    const rawSegments = segmenter.finalize(13 * 15);
+    const cleaned = cleanRawSegments(rawSegments, 60, true, true, 80);
+    assert.strictEqual(cleaned.length, 1, 'Should form 1 consolidated note');
+    // The low-energy C4 scoop should be completely filtered out by energy floor & outlier rejection,
+    // resolving purely to G4 (MIDI 67)
+    assert.strictEqual(cleaned[0].midi, 67, `Expected target MIDI 67 (G4), got ${cleaned[0].midi}`);
+    assert.ok(
+      Math.abs((cleaned[0].frequencyHz || 0) - 392.0) <= 2,
+      `Expected ~392 Hz, got ${cleaned[0].frequencyHz}`
+    );
+  });
+});
+
 function measuresTotalBeats(measure: { notes: NumberedNotationNote[] }): number {
   return measure.notes.reduce((sum, n) => sum + (typeof n.duration === 'number' ? n.duration : 0), 0);
 }
+

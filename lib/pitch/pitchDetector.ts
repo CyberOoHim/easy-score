@@ -17,6 +17,7 @@ export interface PitchDetectorConfig {
   silenceThreshold: number;   // Linear RMS energy below which frame is silence (default: 0.008 ~ -42dB)
   fallbackThreshold: number;  // Max CMNDF value allowed when taking global minimum (default: 0.40)
   medianFilterSize: number;   // Sliding window size for micro-vibrato smoothing (default: 5)
+  stabilizerStrength?: number;// Pitch stabilizer strength 0.0 to 1.0 (default: 0.50)
 }
 
 export interface PitchResult {
@@ -49,7 +50,15 @@ export const DEFAULT_PITCH_CONFIG: Readonly<PitchDetectorConfig> = {
   silenceThreshold: 0.008,
   fallbackThreshold: 0.40,
   medianFilterSize: 5,
+  stabilizerStrength: 0.50,
 };
+
+export {
+  PitchStabilizer,
+  type PitchStabilizerConfig,
+  type StabilizedPitchResult,
+  DEFAULT_STABILIZER_CONFIG,
+} from './pitchStabilizer';
 
 /**
  * Calculate RMS amplitude of an audio buffer.
@@ -319,21 +328,45 @@ export function detectPitch(
   };
 }
 
+import { PitchStabilizer, type StabilizedPitchResult } from './pitchStabilizer';
+
 /**
- * Stateful Pitch Detector with micro-vibrato median smoothing
- * and historical continuity tracking.
+ * Stateful Pitch Detector with multi-stage pitch stabilization
+ * (adaptive median filtering, EMA low-pass, Schmitt trigger hysteresis, and needle dampening).
  */
 export class PitchDetector {
   private config: PitchDetectorConfig;
-  private recentPitches: number[] = [];
-  private consecutiveUnpitchedCount = 0;
+  private stabilizer: PitchStabilizer;
 
   constructor(options?: Partial<PitchDetectorConfig>) {
     this.config = { ...DEFAULT_PITCH_CONFIG, ...options };
+    this.stabilizer = new PitchStabilizer({
+      strength: this.config.stabilizerStrength ?? 0.50,
+      sampleRate: this.config.sampleRate,
+    });
   }
 
   public updateConfig(options: Partial<PitchDetectorConfig>): void {
     this.config = { ...this.config, ...options };
+    if (options.stabilizerStrength !== undefined) {
+      this.stabilizer.setStrength(options.stabilizerStrength);
+    }
+    if (options.sampleRate !== undefined) {
+      this.stabilizer.updateConfig({ sampleRate: options.sampleRate });
+    }
+  }
+
+  public setStabilizerStrength(strength: number): void {
+    this.config.stabilizerStrength = strength;
+    this.stabilizer.setStrength(strength);
+  }
+
+  public getStabilizerStrength(): number {
+    return this.stabilizer.getStrength();
+  }
+
+  public getStabilizer(): PitchStabilizer {
+    return this.stabilizer;
   }
 
   public getConfig(): Readonly<PitchDetectorConfig> {
@@ -341,11 +374,10 @@ export class PitchDetector {
   }
 
   /**
-   * Reset internal pitch tracking history.
+   * Reset internal pitch tracking history and stabilizer state.
    */
   public reset(): void {
-    this.recentPitches = [];
-    this.consecutiveUnpitchedCount = 0;
+    this.stabilizer.reset();
   }
 
   /**
@@ -356,73 +388,11 @@ export class PitchDetector {
   }
 
   /**
-   * Detect pitch with median smoothing to suppress micro-vibrato (4-7Hz)
-   * and isolated octave-jump glitches.
+   * Detect pitch with multi-stage stabilization (adaptive median, EMA low-pass,
+   * Schmitt trigger hysteresis note-locking, and needle dampening).
    */
-  public detectSmoothed(buffer: Float32Array | number[]): PitchResult {
+  public detectSmoothed(buffer: Float32Array | number[]): StabilizedPitchResult {
     const rawResult = this.detect(buffer);
-
-    if (!rawResult.isPitched || rawResult.frequency === null) {
-      this.consecutiveUnpitchedCount++;
-      // If voiced RMS is still present and we have recent pitch history, bridge 1 frame dropout
-      if (
-        this.consecutiveUnpitchedCount === 1 &&
-        this.recentPitches.length >= 2 &&
-        rawResult.rms >= (this.config.silenceThreshold ?? 0.005)
-      ) {
-        const smoothedFreq = computeMedian(this.recentPitches);
-        const noteInfo = getMidiNoteInfo(smoothedFreq);
-        return {
-          ...rawResult,
-          frequency: Math.round(smoothedFreq * 100) / 100,
-          probability: 0.5,
-          isPitched: true,
-          nearestMidi: noteInfo?.midi ?? null,
-          noteName: noteInfo?.noteName ?? null,
-          centsOffNearestMidi: noteInfo?.centsOff ?? 0,
-        };
-      }
-
-      // If unpitched for 3 or more consecutive frames, clear history
-      if (this.consecutiveUnpitchedCount >= 3) {
-        this.recentPitches = [];
-      }
-      return rawResult;
-    }
-
-    this.consecutiveUnpitchedCount = 0;
-    let freq = rawResult.frequency;
-
-    // Octave continuity guard:
-    // If we have >= 3 stable pitch frames and the new raw pitch is roughly 2x or 0.5x,
-    // correct octave jump to avoid intermittent overtone flips.
-    if (this.recentPitches.length >= 3) {
-      const historyMedian = computeMedian(this.recentPitches);
-      const ratio = freq / historyMedian;
-      if (ratio >= 1.85 && ratio <= 2.15) {
-        freq = freq / 2; // Correct octave-high harmonic spike
-      } else if (ratio >= 0.45 && ratio <= 0.55 && freq * 2 <= this.config.maxFrequency) {
-        freq = freq * 2; // Correct subharmonic dip
-      }
-    }
-
-    this.recentPitches.push(freq);
-
-    // Keep sliding window within configured size
-    if (this.recentPitches.length > this.config.medianFilterSize) {
-      this.recentPitches.shift();
-    }
-
-    // Compute median of recent frames
-    const smoothedFreq = computeMedian(this.recentPitches);
-    const noteInfo = getMidiNoteInfo(smoothedFreq);
-
-    return {
-      ...rawResult,
-      frequency: Math.round(smoothedFreq * 100) / 100,
-      nearestMidi: noteInfo?.midi ?? rawResult.nearestMidi,
-      noteName: noteInfo?.noteName ?? rawResult.noteName,
-      centsOffNearestMidi: noteInfo?.centsOff ?? rawResult.centsOffNearestMidi,
-    };
+    return this.stabilizer.process(rawResult);
   }
 }
