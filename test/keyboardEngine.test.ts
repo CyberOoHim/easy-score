@@ -774,11 +774,15 @@ describe('Stage 3 & 4: Web MIDI Integration & End-to-End Performance Workflow', 
       onstatechange: null as any,
     };
 
-    const originalNavigator = (globalThis as any).navigator;
-    (globalThis as any).navigator = {
-      ...originalNavigator,
-      requestMIDIAccess: async () => mockMidiAccess,
-    };
+    const originalNavigatorDesc = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+    Object.defineProperty(globalThis, 'navigator', {
+      value: {
+        ...(globalThis.navigator || {}),
+        requestMIDIAccess: async () => mockMidiAccess,
+      },
+      configurable: true,
+      writable: true,
+    });
 
     try {
       const cleanup = await setupWebMidiListener(
@@ -799,7 +803,11 @@ describe('Stage 3 & 4: Web MIDI Integration & End-to-End Performance Workflow', 
       cleanup();
       assert.equal(mockInput.onmidimessage, null);
     } finally {
-      (globalThis as any).navigator = originalNavigator;
+      if (originalNavigatorDesc) {
+        Object.defineProperty(globalThis, 'navigator', originalNavigatorDesc);
+      } else {
+        delete (globalThis as any).navigator;
+      }
     }
   });
 

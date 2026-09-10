@@ -73,8 +73,6 @@ export interface Song {
   notesPerLine?: number;    // Measures per line display (default 4)
   description?: string;
   updatedAt?: number;       // Last modified timestamp
-  isPresetModified?: boolean; // True if this song is an edited version of a built-in preset
-  originalPresetId?: string;  // ID of the original preset if modified
 }
 
 export type LyricDisplayMode =
@@ -90,34 +88,3 @@ export type LyricDisplayMode =
 
 export type InstrumentType = 'piano' | 'flute' | 'whistle' | 'guitar' | 'synth' | 'bell' | 'cello';
 
-export type EditorEditMode = 'note' | 'sheet' | 'verse' | 'measure';
-export type NoteEditSubMode = 'verse' | 'measure';
-
-export interface VerseNoteRef {
-  note: NumberedNotationNote;
-  measureIdx: number;
-  noteIdx: number;
-  measureIndex: number;
-  noteIndex: number;
-  measureNumber: number;
-  chord?: string;
-  section?: string;
-  isFirstInMeasure: boolean;
-}
-
-export interface VerseItem {
-  id: string;
-  verseIndex: number;
-  notes: VerseNoteRef[];
-  startMeasureNumber: number;
-  endMeasureNumber: number;
-  section?: string;
-  chords: string[];
-  lyricSummary: {
-    poj: string;
-    hanlo: string;
-    hanji?: string;
-    custom?: string;
-    tl?: string;
-  };
-}

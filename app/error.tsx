@@ -2,9 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { AlertTriangle, Download, RotateCcw, Home } from 'lucide-react';
-import { getStoredCurrentSong } from '@/lib/storage';
-import { getActiveSongFromDB } from '@/lib/indexedDb';
-import { exportSongToJson } from '@/lib/songParser';
+
+const STORAGE_KEY_CURRENT_SONG = 'score_transcriber_current_song_v1';
 
 export default function Error({
   error,
@@ -19,23 +18,17 @@ export default function Error({
     console.error('Unhandled Application Error:', error);
   }, [error]);
 
-  const handleDownloadBackup = async () => {
+  const handleDownloadBackup = () => {
     try {
-      let song = null;
-      try {
-        song = await getActiveSongFromDB();
-      } catch {
-        // fallback
-      }
-      if (!song) {
-        song = getStoredCurrentSong();
-      }
-      const json = exportSongToJson(song);
+      const stored = typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY_CURRENT_SONG) : null;
+      if (!stored) return;
+      const song = JSON.parse(stored);
+      const json = JSON.stringify(song, null, 2);
       const blob = new Blob([json], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${song.title || 'composer-backup'}-${Date.now()}.json`;
+      a.download = `${(song.title || 'transcription-backup').replace(/\s+/g, '_')}-${Date.now()}.json`;
       a.click();
       URL.revokeObjectURL(url);
       setDownloaded(true);

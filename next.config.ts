@@ -25,18 +25,9 @@ const nextConfig: NextConfig = {
     : {}),
   images: {
     unoptimized: true,
-    remotePatterns: [
-      {
-        protocol: 'https',
-        hostname: 'picsum.photos',
-        port: '',
-        pathname: '/**',
-      },
-    ],
   },
-  transpilePackages: ['motion'],
   experimental: {
-    optimizePackageImports: ['lucide-react', 'motion', '@google/genai'],
+    optimizePackageImports: ['lucide-react'],
   },
   webpack: (config, {dev}) => {
     // HMR is disabled in AI Studio via DISABLE_HMR env var.

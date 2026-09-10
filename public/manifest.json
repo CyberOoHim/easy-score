@@ -1,15 +1,15 @@
 {
-  "name": "Taigi Composer & Karaoke Studio",
-  "short_name": "Taigi Composer",
-  "description": "Compose, edit, and play aligned Taigi (Hanji/POJ/TL) lyrics with numbered musical notation (Numbered Notation) and interactive Karaoke engine.",
+  "name": "Hum & Keyboard Score Transcriber",
+  "short_name": "Score Transcriber",
+  "description": "Real-time vocal humming and keyboard/MIDI score transcription studio into numbered musical notation with interactive playback and MIDI export.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#18181b",
+  "background_color": "#09090b",
   "theme_color": "#f59e0b",
   "lang": "en",
-  "categories": ["music", "education", "utilities"],
+  "categories": ["music", "audio", "utilities"],
   "icons": [
     {
       "src": "icons/icon-192x192.png",
@@ -44,17 +44,17 @@
   ],
   "shortcuts": [
     {
-      "name": "Karaoke Player",
-      "short_name": "Karaoke",
-      "description": "Play and sing along with real-time bouncing ball lyrics",
-      "url": "./?mode=karaoke",
+      "name": "Hum to Score",
+      "short_name": "Hum",
+      "description": "Transcribe melody from vocal humming or acoustic instrument",
+      "url": "./#hum",
       "icons": [{ "src": "icons/icon-192x192.png", "sizes": "192x192" }]
     },
     {
-      "name": "Score Editor",
-      "short_name": "Editor",
-      "description": "Edit notes, chords, and Taigi syllables",
-      "url": "./?mode=editor",
+      "name": "Keyboard to Score",
+      "short_name": "Keyboard",
+      "description": "Transcribe melody from screen piano, QWERTY typing, or MIDI",
+      "url": "./#keyboard",
       "icons": [{ "src": "icons/icon-192x192.png", "sizes": "192x192" }]
     }
   ]

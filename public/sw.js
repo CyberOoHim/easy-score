@@ -1,5 +1,5 @@
-// Taigi Composer & Karaoke Studio Service Worker
-const CACHE_NAME = 'taigi-composer-cache-v1';
+// Easy Score Transcriber Service Worker
+const CACHE_NAME = 'easy-score-cache-v1';
 
 const PRECACHE_RESOURCES = [
   './',
