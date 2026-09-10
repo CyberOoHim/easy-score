@@ -10,8 +10,7 @@ import {
   InstrumentType,
 } from '@/types/song';
 import { audioEngine } from '@/lib/audioEngine';
-import { HumToScoreModal, InsertionMode } from '@/components/composer/HumToScoreModal';
-import { KeyboardToScoreModal } from '@/components/composer/KeyboardToScoreModal';
+import { ScoreTranscriptionDeck, InsertionMode } from '@/components/composer/ScoreTranscriptionDeck';
 import { NumberedNotationNoteComponent } from '@/components/NumberedNotationNoteComponent';
 import { downloadMidiFile } from '@/lib/midiExport';
 import {
@@ -515,25 +514,17 @@ export default function Home() {
           </div>
         </div>
 
-        {/* WORKSPACE CONTAINER */}
+        {/* WORKSPACE CONTAINER: UNIFIED SCORE TRANSCRIPTION DECK */}
         <div className="w-full">
-          {activeFeature === 'hum' ? (
-            <HumToScoreModal
-              isOpen={true}
-              isEmbedded={true}
-              song={song}
-              audioEngine={audioEngine}
-              onCommitTranscription={handleCommitTranscription}
-            />
-          ) : (
-            <KeyboardToScoreModal
-              isOpen={true}
-              isEmbedded={true}
-              song={song}
-              audioEngine={audioEngine}
-              onCommitTranscription={handleCommitTranscription}
-            />
-          )}
+          <ScoreTranscriptionDeck
+            isOpen={true}
+            isEmbedded={true}
+            song={song}
+            audioEngine={audioEngine}
+            mode={activeFeature}
+            onModeChange={setActiveFeature}
+            onCommitTranscription={handleCommitTranscription}
+          />
         </div>
 
         {/* ========================================================================= */}
