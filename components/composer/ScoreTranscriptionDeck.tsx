@@ -762,6 +762,24 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
     };
   }, [stopAllPipelines]);
 
+  // Audio Engine playback state listener: automatically toggle synth play button back when playback finishes
+  useEffect(() => {
+    const unsubState = audioEngine.subscribeState(state => {
+      if (!state.isPlaying) {
+        setIsSynthPlaying(false);
+      }
+    });
+
+    const unsubEnded = audioEngine.subscribeEnded(() => {
+      setIsSynthPlaying(false);
+    });
+
+    return () => {
+      unsubState();
+      unsubEnded();
+    };
+  }, [audioEngine]);
+
   // Oscilloscope drawing animation for Live Practice Mode (Hum Mode)
   const drawPracticeOscilloscope = useCallback(() => {
     if (animFrameIdRef.current) {
@@ -1367,6 +1385,22 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
       const segs = rawSegments;
       if (segs.length === 0) return;
 
+      if (isSynthPlaying) {
+        audioEngine.stop();
+        setIsSynthPlaying(false);
+      }
+      if (isRawPlaying) {
+        setIsRawPlaying(false);
+        rawPlaybackTimersRef.current.forEach(id => clearTimeout(id));
+        rawPlaybackTimersRef.current = [];
+        if (micAudioElementRef.current) {
+          try {
+            micAudioElementRef.current.pause();
+            micAudioElementRef.current.currentTime = 0;
+          } catch {}
+        }
+      }
+
       const newGrid = overrides?.grid ?? quantizeGrid;
       const newOct = overrides?.octaveShift ?? octaveShiftVal;
       const newAcc = overrides?.accidentalPreference ?? accidentalPref;
@@ -1417,6 +1451,9 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
       scaleMode,
       filterOneFingerGaps,
       oneFingerGapThresholdMs,
+      isSynthPlaying,
+      isRawPlaying,
+      audioEngine,
     ]
   );
 
@@ -1444,7 +1481,12 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
       } else {
         micAudioElementRef.current.src = recordedAudioUrl;
       }
+      micAudioElementRef.current.currentTime = 0;
       micAudioElementRef.current.onended = () => {
+        setIsRawPlaying(false);
+        setRawPlaybackProgress(0);
+      };
+      micAudioElementRef.current.onerror = () => {
         setIsRawPlaying(false);
         setRawPlaybackProgress(0);
       };
@@ -1455,7 +1497,12 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
 
       setIsRawPlaying(true);
       setRawPlaybackProgress(0);
-      const totalDurationMs = segs[segs.length - 1].endTimeMs;
+      let maxEndMs = 0;
+      segs.forEach(s => {
+        const segEnd = s.endTimeMs > 0 ? s.endTimeMs : s.startTimeMs + (s.durationMs || 300);
+        if (segEnd > maxEndMs) maxEndMs = segEnd;
+      });
+      const totalDurationMs = Math.max(400, maxEndMs + 150);
       const startTime = performance.now();
 
       segs.forEach((seg, idx) => {
@@ -1483,7 +1530,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
         if (elapsed >= totalDurationMs) {
           clearInterval(ticker);
           setIsRawPlaying(false);
-          setRawPlaybackProgress(100);
+          setRawPlaybackProgress(0);
         } else {
           setRawPlaybackProgress((elapsed / totalDurationMs) * 100);
         }
@@ -1513,9 +1560,12 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
     if (transcribedMeasures.length === 0) return;
 
     setIsRawPlaying(false);
+    rawPlaybackTimersRef.current.forEach(id => clearTimeout(id));
+    rawPlaybackTimersRef.current = [];
     if (micAudioElementRef.current) {
       try {
         micAudioElementRef.current.pause();
+        micAudioElementRef.current.currentTime = 0;
       } catch {}
     }
 

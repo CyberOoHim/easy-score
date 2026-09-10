@@ -2006,6 +2006,18 @@ export class AudioEngine {
 
     // Start UI update animation loop
     this.startTrackingLoop(totalDuration, timelineEvents);
+
+    // Auto stop safety timer when song finishes if not looping
+    if (!this.options.loopRange && this.options.loopMeasure === null && totalDuration > 0) {
+      const remainingSec = Math.max(0, totalDuration - startFromSec);
+      const stopTimer = setTimeout(() => {
+        if (this.isPlaying && this.currentSong === song) {
+          this.stop();
+          this.notifyEnded();
+        }
+      }, (remainingSec + 0.12) * 1000);
+      this.scheduledTimeoutIds.push(stopTimer as unknown as number);
+    }
   }
 
   private startTrackingLoop(
