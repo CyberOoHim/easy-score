@@ -1184,8 +1184,20 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
     setStep('COUNTING_IN');
     setCountdownBeat(COUNT_IN_BEATS);
 
+    // Fire first beat pulse immediately (downbeat of count-in)
+    setIsBeatPulse(true);
+    setIsDownbeatFlash(true);
+    if (audibleClickRef.current) {
+      audioEngine.playMetronomeTick(true);
+    }
+    if (metronomePulseTimeoutRef.current) clearTimeout(metronomePulseTimeoutRef.current);
+    metronomePulseTimeoutRef.current = setTimeout(() => {
+      setIsBeatPulse(false);
+      setIsDownbeatFlash(false);
+      metronomePulseTimeoutRef.current = null;
+    }, 140);
+
     let count = COUNT_IN_BEATS;
-    audioEngine.playMetronomeTick(true);
 
     if (countInIntervalRef.current) {
       clearInterval(countInIntervalRef.current);
@@ -1196,7 +1208,18 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
       count -= 1;
       if (count > 0) {
         setCountdownBeat(count);
-        audioEngine.playMetronomeTick(false);
+        // Pulse metronome bar on each countdown beat
+        setIsBeatPulse(true);
+        setIsDownbeatFlash(false);
+        if (audibleClickRef.current) {
+          audioEngine.playMetronomeTick(false);
+        }
+        if (metronomePulseTimeoutRef.current) clearTimeout(metronomePulseTimeoutRef.current);
+        metronomePulseTimeoutRef.current = setTimeout(() => {
+          setIsBeatPulse(false);
+          setIsDownbeatFlash(false);
+          metronomePulseTimeoutRef.current = null;
+        }, 140);
       } else {
         if (countInIntervalRef.current) {
           clearInterval(countInIntervalRef.current);
@@ -2453,132 +2476,54 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
         )}
 
         {/* ======================================================================= */}
-        {/* STEP 2: COUNTING_IN                                                     */}
+        {/* STEP 2 & 3: COUNTING_IN + RECORDING (unified — zero keyboard jump)      */}
         {/* ======================================================================= */}
-        {step === 'COUNTING_IN' && (
+        {(step === 'COUNTING_IN' || step === 'RECORDING') && (
           <div className="flex flex-col gap-5 animate-in fade-in duration-200">
-            {/* Status Header */}
-            <div className="flex items-center justify-between px-4 py-2.5 bg-amber-500/15 border border-amber-500/30 rounded-2xl flex-wrap gap-2">
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-amber-500 animate-ping" />
-                <span className="text-xs font-black text-amber-700 dark:text-amber-300 uppercase tracking-wider">
-                  {activeMode === 'hum'
-                    ? `哼唱預備 · 倒數 ${countdownBeat} 拍`
-                    : `琴鍵預備 · 倒數 ${countdownBeat} 拍`}
-                </span>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="text-xs font-mono text-amber-600 dark:text-amber-400 font-bold hidden sm:inline">
-                  {countdownBeatsCount} 拍預備拍 · 速度 {activeBpm} BPM
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    stopAllPipelines();
-                    setStep('SETUP');
-                  }}
-                  className="px-3 py-1 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-bold text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
-                >
-                  取消預備
-                </button>
-              </div>
-            </div>
 
-            {/* Prominent Countdown & Readiness Banner */}
-            <div className="flex flex-col sm:flex-row items-center justify-between p-5 bg-gradient-to-r from-amber-500/15 via-amber-500/5 to-zinc-900/60 border border-amber-500/30 rounded-2xl gap-4">
-              <div className="flex items-center gap-4">
-                <div
-                  key={countdownBeat}
-                  className="relative w-18 h-18 sm:w-20 sm:h-20 shrink-0 rounded-2xl bg-gradient-to-br from-amber-400 to-amber-500 text-zinc-950 flex items-center justify-center text-5xl font-black font-mono shadow-xl shadow-amber-500/25 ring-4 ring-amber-400/30 animate-pulse select-none"
-                >
-                  {countdownBeat}
-                </div>
-                <div className="flex flex-col gap-1">
-                  <span className="text-sm sm:text-base font-extrabold text-zinc-900 dark:text-zinc-100">
+            {/* ── Status Header ─────────────────────────────────────────────── */}
+            {step === 'COUNTING_IN' ? (
+              <div className="flex items-center justify-between px-4 py-2.5 bg-amber-500/15 border border-amber-500/30 rounded-2xl flex-wrap gap-2 min-h-[42px]">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-amber-500 animate-ping" />
+                  <span className="text-xs font-black text-amber-700 dark:text-amber-300 uppercase tracking-wider">
                     {activeMode === 'hum'
-                      ? '請對準麥克風，倒數結束後開始哼唱...'
-                      : '請將雙手置於琴鍵，倒數結束後開始彈奏...'}
+                      ? `哼唱預備 · 倒數 ${countdownBeat} 拍`
+                      : `琴鍵預備 · 倒數 ${countdownBeat} 拍`}
                   </span>
-                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    {activeMode === 'hum'
-                      ? '下方琴鍵可隨時點擊試聽音高協助定音 · 倒數結束自動開始收音'
-                      : '下方琴鍵已就緒 · 支援螢幕觸控、滑鼠點擊與電腦鍵盤 (A~K 鍵)'}
-                  </p>
-                  {/* Beat Progress Dots */}
-                  <div className="flex items-center gap-1.5 mt-1.5">
-                    {Array.from({ length: countdownBeatsCount }).map((_, idx) => {
-                      const beatNum = countdownBeatsCount - idx;
-                      const isCurrent = countdownBeat === beatNum;
-                      const isPassed = countdownBeat < beatNum;
-                      return (
-                        <div
-                          key={idx}
-                          className={`h-2 rounded-full transition-all duration-150 ${
-                            isCurrent
-                              ? 'w-7 bg-amber-500 shadow-sm shadow-amber-500/50'
-                              : isPassed
-                                ? 'w-2 bg-amber-500/30'
-                                : 'w-2 bg-zinc-300 dark:bg-zinc-700'
-                          }`}
-                        />
-                      );
-                    })}
-                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-mono text-amber-600 dark:text-amber-400 font-bold hidden sm:inline">
+                    {countdownBeatsCount} 拍預備拍 · 速度 {activeBpm} BPM
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      stopAllPipelines();
+                      setStep('SETUP');
+                    }}
+                    className="px-3 py-1 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-bold text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
+                  >
+                    取消預備
+                  </button>
                 </div>
               </div>
-
-              <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
-                <button
-                  type="button"
-                  onClick={() => {
-                    stopAllPipelines();
-                    setStep('SETUP');
-                  }}
-                  className="px-4 py-2 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-bold text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
-                >
-                  返回設定
-                </button>
+            ) : (
+              <div className="flex items-center justify-between px-4 py-2.5 bg-rose-500/15 border border-rose-500/30 rounded-2xl flex-wrap gap-2 min-h-[42px]">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-rose-500 animate-ping" />
+                  <span className="text-xs font-black text-rose-700 dark:text-rose-300 uppercase tracking-wider">
+                    {activeMode === 'hum' ? `錄音辨識中 · ${activePreset.nameZh}` : '琴鍵彈奏收集中'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 font-mono font-bold text-sm text-rose-700 dark:text-rose-300">
+                  <Clock className="w-4 h-4" />
+                  <span>{recordingSeconds.toFixed(1)}s</span>
+                </div>
               </div>
-            </div>
+            )}
 
-            {/* PERSISTENT PIANO BED IN COUNTING_IN */}
-            <div className="flex flex-col gap-2">
-              <PianoBed
-                activeKey={activeKey}
-                accidentalPreference={accidentalPref}
-                octaveBedView={octaveBedView}
-                onOctaveBedViewChange={setOctaveBedView}
-                activeMidiSet={activeMidiSet}
-                detectedPitchMidi={activeMode === 'hum' && isVoiced ? currentMidi : null}
-                onNoteDown={handlePianoNoteDown}
-                onNoteUp={handlePianoNoteUp}
-                mode={activeMode === 'hum' ? 'align' : 'record'}
-                octaveShiftVal={octaveShiftVal}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* ======================================================================= */}
-        {/* STEP 3: RECORDING                                                       */}
-        {/* ======================================================================= */}
-        {step === 'RECORDING' && (
-          <div className="flex flex-col gap-5 animate-in fade-in duration-200">
-            {/* Status Header */}
-            <div className="flex items-center justify-between px-4 py-2.5 bg-rose-500/15 border border-rose-500/30 rounded-2xl flex-wrap gap-2">
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-rose-500 animate-ping" />
-                <span className="text-xs font-black text-rose-700 dark:text-rose-300 uppercase tracking-wider">
-                  {activeMode === 'hum' ? `錄音辨識中 · ${activePreset.nameZh}` : '琴鍵彈奏收集中'}
-                </span>
-              </div>
-              <div className="flex items-center gap-2 font-mono font-bold text-sm text-rose-700 dark:text-rose-300">
-                <Clock className="w-4 h-4" />
-                <span>{recordingSeconds.toFixed(1)}s</span>
-              </div>
-            </div>
-
-            {/* VISUAL METRONOME CLICK BAR (COMMON TO BOTH MODES) */}
+            {/* ── VISUAL METRONOME CLICK BAR (Red Frame — identical in both steps) ── */}
             <div
               id="deck-visual-metronome-bar"
               className={`h-16 px-4 rounded-2xl border transition-colors duration-100 flex items-center justify-between gap-3 overflow-hidden select-none box-border ${
@@ -2589,6 +2534,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
                     : 'bg-zinc-900/90 border-zinc-800'
               }`}
             >
+              {/* Left: Beat Badge + Label */}
               <div className="flex items-center gap-3 shrink-0 w-44 sm:w-48">
                 <div
                   className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-lg transition-all duration-100 shrink-0 ${
@@ -2599,48 +2545,73 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
                         : 'bg-zinc-800 text-zinc-300 border border-zinc-700'
                   }`}
                 >
-                  {currentBeatInBar}
+                  {step === 'COUNTING_IN' ? countdownBeat : currentBeatInBar}
                 </div>
                 <div className="flex flex-col min-w-0">
                   <span className="text-xs font-bold text-zinc-200 flex items-center gap-1.5 truncate">
                     <Activity className="w-3.5 h-3.5 text-amber-400" />
-                    <span>節拍器</span>
+                    <span>{step === 'COUNTING_IN' ? '預備倒數' : '節拍器'}</span>
                   </span>
                   <span className="text-[10px] font-mono text-zinc-400">
-                    {activeBpm} BPM · {activeTimeSignature} 拍
+                    {step === 'COUNTING_IN'
+                      ? `${activeBpm} BPM · 倒數 ${countdownBeat} 拍`
+                      : `${activeBpm} BPM · ${activeTimeSignature} 拍`}
                   </span>
                 </div>
               </div>
 
-              {/* Beat Pods */}
+              {/* Center: Beat Pods */}
               <div className="flex items-center justify-center gap-2 flex-1">
-                {Array.from({ length: parseInt(activeTimeSignature.split('/')[0], 10) || 4 }).map(
-                  (_, idx) => {
-                    const beatNum = idx + 1;
-                    const isCurrent = currentBeatInBar === beatNum;
-                    const isDown = beatNum === 1;
-                    return (
-                      <div
-                        key={beatNum}
-                        className={`flex items-center justify-center w-10 sm:w-12 h-9 rounded-xl text-xs font-mono font-bold transition-all duration-100 select-none ${
-                          isCurrent
-                            ? isDown
-                              ? 'bg-amber-400 text-zinc-950 font-black ring-1 ring-amber-300 shadow-sm scale-105'
-                              : 'bg-amber-500 text-zinc-950 font-black scale-105'
-                            : isDown
-                              ? 'bg-zinc-800/90 border border-amber-500/40 text-amber-400'
-                              : 'bg-zinc-800/60 text-zinc-400 border border-zinc-700/60'
-                        }`}
-                      >
-                        <span className="text-[9px] mr-0.5">{isDown ? '★' : '•'}</span>
-                        <span>{beatNum}</span>
-                      </div>
-                    );
-                  }
-                )}
+                {step === 'COUNTING_IN'
+                  ? Array.from({ length: countdownBeatsCount }).map((_, idx) => {
+                      const beatNum = idx + 1;
+                      const isCurrent = countdownBeat === beatNum;
+                      const isDown = beatNum === 1;
+                      return (
+                        <div
+                          key={beatNum}
+                          className={`flex items-center justify-center w-10 sm:w-12 h-9 rounded-xl text-xs font-mono font-bold transition-all duration-100 select-none ${
+                            isCurrent
+                              ? isDown
+                                ? 'bg-amber-400 text-zinc-950 font-black ring-1 ring-amber-300 shadow-sm scale-105'
+                                : 'bg-amber-500 text-zinc-950 font-black scale-105'
+                              : isDown
+                                ? 'bg-zinc-800/90 border border-amber-500/40 text-amber-400'
+                                : 'bg-zinc-800/60 text-zinc-400 border border-zinc-700/60'
+                          }`}
+                        >
+                          <span className="text-[9px] mr-0.5">{isDown ? '★' : '•'}</span>
+                          <span>{beatNum}</span>
+                        </div>
+                      );
+                    })
+                  : Array.from({ length: parseInt(activeTimeSignature.split('/')[0], 10) || 4 }).map(
+                      (_, idx) => {
+                        const beatNum = idx + 1;
+                        const isCurrent = currentBeatInBar === beatNum;
+                        const isDown = beatNum === 1;
+                        return (
+                          <div
+                            key={beatNum}
+                            className={`flex items-center justify-center w-10 sm:w-12 h-9 rounded-xl text-xs font-mono font-bold transition-all duration-100 select-none ${
+                              isCurrent
+                                ? isDown
+                                  ? 'bg-amber-400 text-zinc-950 font-black ring-1 ring-amber-300 shadow-sm scale-105'
+                                  : 'bg-amber-500 text-zinc-950 font-black scale-105'
+                                : isDown
+                                  ? 'bg-zinc-800/90 border border-amber-500/40 text-amber-400'
+                                  : 'bg-zinc-800/60 text-zinc-400 border border-zinc-700/60'
+                            }`}
+                          >
+                            <span className="text-[9px] mr-0.5">{isDown ? '★' : '•'}</span>
+                            <span>{beatNum}</span>
+                          </div>
+                        );
+                      }
+                    )}
               </div>
 
-              {/* Audible Click Toggle */}
+              {/* Right: Audible Click Toggle */}
               <button
                 type="button"
                 onClick={() => setAudibleClickDuringRecording(!audibleClickDuringRecording)}
@@ -2664,7 +2635,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
               </button>
             </div>
 
-            {/* HUM-SPECIFIC: PITCH TUNER GAUGE */}
+            {/* ── HUM-SPECIFIC: PITCH TUNER GAUGE (shown in both steps for hum) ─ */}
             {activeMode === 'hum' && (
               <div className="p-4 bg-zinc-900 border border-zinc-800 rounded-2xl flex flex-col gap-3">
                 <div className="flex items-center justify-between">
@@ -2722,13 +2693,17 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
               </div>
             )}
 
-            {/* KEYBOARD-SPECIFIC: LIVE NOTES STREAM & DURATION BADGE */}
+            {/* ── KEYBOARD-SPECIFIC: DURATION BADGE & LIVE NOTES STREAM ─────── */}
             {activeMode === 'keyboard' && (
               <div className="flex flex-col gap-3">
-                <div className="flex items-center justify-between px-4 py-2.5 bg-zinc-900 rounded-2xl border border-zinc-800">
+                <div className="flex items-center justify-between px-4 py-2.5 bg-zinc-900 rounded-2xl border border-zinc-800 min-h-[44px]">
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-bold text-zinc-400">目前按壓時值：</span>
-                    {activeHeldBeats !== null ? (
+                    {step === 'COUNTING_IN' ? (
+                      <span className="text-xs text-zinc-500 font-mono">
+                        倒數結束後開始彈奏...
+                      </span>
+                    ) : activeHeldBeats !== null ? (
                       <span className="px-2 py-0.5 rounded-lg bg-amber-500 text-zinc-950 font-black font-mono text-xs animate-pulse">
                         {activeHeldBeats.toFixed(2)} 拍
                       </span>
@@ -2738,16 +2713,21 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
                   </div>
                   <button
                     type="button"
+                    disabled={step === 'COUNTING_IN'}
                     onClick={() => keyEngineRef.current?.undoLastNote()}
-                    className="px-2.5 py-1 text-xs font-bold rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 cursor-pointer"
+                    className={`px-2.5 py-1 text-xs font-bold rounded-lg border transition-colors ${
+                      step === 'COUNTING_IN'
+                        ? 'bg-zinc-800/50 text-zinc-600 border-zinc-700/50 cursor-not-allowed'
+                        : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-zinc-700 cursor-pointer'
+                    }`}
                     title="撤銷上一個音符 (Backspace)"
                   >
                     撤銷上音 (Undo)
                   </button>
                 </div>
 
-                {/* Live stream */}
-                {liveRecordedNotes.length > 0 && (
+                {/* Live stream — only shows during recording */}
+                {step === 'RECORDING' && liveRecordedNotes.length > 0 && (
                   <div className="flex items-center gap-2 p-2 bg-zinc-950/70 rounded-xl border border-zinc-800/80 overflow-x-auto">
                     <span className="text-[10px] font-bold text-zinc-400 font-mono shrink-0">
                       已錄入：
@@ -2772,7 +2752,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
               </div>
             )}
 
-            {/* PERSISTENT PIANO BED IN RECORDING (BOTH MODES) */}
+            {/* ── PERSISTENT PIANO BED (never unmounted — zero jump) ──────────── */}
             <div className="flex flex-col gap-2">
               <PianoBed
                 activeKey={activeKey}
@@ -2788,8 +2768,8 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
               />
             </div>
 
-            {/* FINISH / RESTART ACTIONS */}
-            <div className="flex items-center justify-between pt-2">
+            {/* ── Bottom Action Row (identical height in both steps) ────────── */}
+            <div className="flex items-center justify-between pt-2 min-h-[52px]">
               <button
                 type="button"
                 onClick={() => {
@@ -2799,24 +2779,30 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
                 className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded-xl transition-colors cursor-pointer"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
-                <span>重新錄製</span>
+                <span>{step === 'COUNTING_IN' ? '取消預備' : '重新錄製'}</span>
               </button>
 
-              <button
-                id="deck-finish-recording-btn"
-                type="button"
-                onClick={handleFinishRecording}
-                className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-black text-sm shadow-md transition-all active:scale-95 cursor-pointer"
-              >
-                <Check className="w-4 h-4 stroke-[3]" />
-                <span>完成轉寫並檢視 (Finish & Review)</span>
-              </button>
+              {step === 'COUNTING_IN' ? (
+                <div className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-400 text-sm font-bold select-none">
+                  <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                  <span>倒數結束自動開始錄製...</span>
+                </div>
+              ) : (
+                <button
+                  id="deck-finish-recording-btn"
+                  type="button"
+                  onClick={handleFinishRecording}
+                  className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-black text-sm shadow-md transition-all active:scale-95 cursor-pointer"
+                >
+                  <Check className="w-4 h-4 stroke-[3]" />
+                  <span>完成轉寫並檢視 (Finish &amp; Review)</span>
+                </button>
+              )}
             </div>
           </div>
         )}
 
-        {/* ======================================================================= */}
-        {/* STEP 4: REVIEW                                                          */}
+
         {/* ======================================================================= */}
         {step === 'REVIEW' && (
           <div className="flex flex-col gap-6 animate-in fade-in duration-200">
