@@ -29,6 +29,7 @@ import {
   type TempoEstimationResult,
 } from './tempoEstimator';
 
+export type { TempoEstimationResult };
 export type TranscriptionEngine = 'basic-pitch' | 'dsp' | 'auto';
 
 export interface AudioFileTranscriptionOptions {
