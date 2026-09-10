@@ -10,19 +10,7 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: false,
   },
-  // Static export for GitHub Pages only; Cloud Run uses standard server runtime
-  ...(isStaticExport
-    ? {
-        output: 'export',
-        trailingSlash: true,
-        basePath: process.env.NEXT_PUBLIC_BASE_PATH || '',
-        assetPrefix: process.env.NEXT_PUBLIC_BASE_PATH || undefined,
-      }
-    : process.env.BUILD_STANDALONE === 'true'
-    ? {
-        output: 'standalone',
-      }
-    : {}),
+  output: 'standalone',
   images: {
     unoptimized: true,
   },
