@@ -71,6 +71,7 @@ import {
   HelpCircle,
   Delete,
   Headphones,
+  Target,
 } from 'lucide-react';
 
 export type StudioTranscriptionMode = 'hum' | 'keyboard';
@@ -256,6 +257,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
   );
   const [quantizeGrid, setQuantizeGrid] = useState<QuantizeGrid>('eighth');
   const [enableCountIn, setEnableCountIn] = useState<boolean>(true);
+  const [countdownBeatsCount, setCountdownBeatsCount] = useState<2 | 3 | 4>(2);
   const [audibleClickDuringRecording, setAudibleClickDuringRecording] = useState<boolean>(
     activeMode === 'keyboard'
   );
@@ -268,7 +270,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
   const [octaveBedView, setOctaveBedView] = useState<OctaveBedView>('mid_high');
 
   // Count-in state
-  const [countdownBeat, setCountdownBeat] = useState<number>(3);
+  const [countdownBeat, setCountdownBeat] = useState<number>(2);
 
   // Metronome Pulse Bar State (Common to both modes)
   const [currentBeatInBar, setCurrentBeatInBar] = useState<number>(1);
@@ -290,6 +292,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
   const [currentCents, setCurrentCents] = useState<number>(0);
   const [currentRms, setCurrentRms] = useState<number>(0);
   const [isVoiced, setIsVoiced] = useState<boolean>(false);
+  const [isPracticingPitch, setIsPracticingPitch] = useState<boolean>(false);
   const [recordedAudioUrl, setRecordedAudioUrl] = useState<string | null>(null);
   const [micGain, setMicGain] = useState<number>(() => {
     if (typeof window !== 'undefined') {
@@ -346,6 +349,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
   const yinDetectorRef = useRef<YinDetector | null>(null);
   const noteSegmenterRef = useRef<NoteSegmenter | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const practiceCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animFrameIdRef = useRef<number | null>(null);
   const micAudioElementRef = useRef<HTMLAudioElement | null>(null);
@@ -410,16 +414,14 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
         micGainNodeRef.current.gain.value = clamped;
       }
     }
-    const baseSilenceThreshold = activePreset.yinConfig.silenceThreshold ?? 0.008;
-    const effectiveSilenceThreshold =
-      baseSilenceThreshold * Math.min(4.5, Math.max(1.0, 1.0 + (clamped - 1.0) * 0.25));
+    const effectiveSilenceThreshold = 0.005;
     if (yinDetectorRef.current) {
       yinDetectorRef.current.updateConfig({ silenceThreshold: effectiveSilenceThreshold });
     }
     if (noteSegmenterRef.current) {
       noteSegmenterRef.current.updateConfig({ silenceThresholdRms: effectiveSilenceThreshold });
     }
-  }, [activePreset]);
+  }, []);
 
   // Web MIDI Handler
   const handleIncomingMidiMessage = useCallback(
@@ -595,6 +597,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
   // Stop all pipelines and audio
   const stopAllPipelines = useCallback(() => {
     void wakeLockManager.release();
+    setIsPracticingPitch(false);
 
     if (recordingTimerRef.current) {
       clearInterval(recordingTimerRef.current);
@@ -692,6 +695,8 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
     setIsVoiced(false);
     setCurrentPitchHz(null);
     setCurrentMidi(null);
+    setCurrentCents(0);
+    setCurrentRms(0);
   }, [audioEngine]);
 
   // Clean up on unmount
@@ -701,48 +706,219 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
     };
   }, [stopAllPipelines]);
 
-  // Oscilloscope drawing animation (Hum Mode)
-  const drawOscilloscope = useCallback(() => {
+  // Oscilloscope drawing animation for Live Practice Mode (Hum Mode)
+  const drawPracticeOscilloscope = useCallback(() => {
+    if (animFrameIdRef.current) {
+      cancelAnimationFrame(animFrameIdRef.current);
+    }
+
     const renderFrame = () => {
-      if (!analyserRef.current || !canvasRef.current) return;
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
+      if (!analyserRef.current) return;
+      const canvas = practiceCanvasRef.current;
+      if (canvas) {
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          const bufferLength = analyserRef.current.fftSize;
+          const dataArray = new Uint8Array(bufferLength);
+          analyserRef.current.getByteTimeDomainData(dataArray);
 
-      const bufferLength = analyserRef.current.fftSize;
-      const dataArray = new Uint8Array(bufferLength);
-      analyserRef.current.getByteTimeDomainData(dataArray);
+          ctx.fillStyle = '#09090b';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      ctx.fillStyle = '#09090b';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+          // Center baseline guide
+          ctx.lineWidth = 1;
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+          ctx.beginPath();
+          ctx.moveTo(0, canvas.height / 2);
+          ctx.lineTo(canvas.width, canvas.height / 2);
+          ctx.stroke();
 
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = '#f59e0b';
-      ctx.beginPath();
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = '#10b981';
+          ctx.beginPath();
 
-      const sliceWidth = (canvas.width * 1.0) / bufferLength;
-      let x = 0;
+          const sliceWidth = (canvas.width * 1.0) / bufferLength;
+          let x = 0;
 
-      for (let i = 0; i < bufferLength; i++) {
-        const v = dataArray[i] / 128.0;
-        const y = (v * canvas.height) / 2;
+          for (let i = 0; i < bufferLength; i++) {
+            const v = dataArray[i] / 128.0;
+            const y = (v * canvas.height) / 2;
 
-        if (i === 0) {
-          ctx.moveTo(x, y);
-        } else {
-          ctx.lineTo(x, y);
+            if (i === 0) {
+              ctx.moveTo(x, y);
+            } else {
+              ctx.lineTo(x, y);
+            }
+            x += sliceWidth;
+          }
+
+          ctx.lineTo(canvas.width, canvas.height / 2);
+          ctx.stroke();
         }
-        x += sliceWidth;
       }
-
-      ctx.lineTo(canvas.width, canvas.height / 2);
-      ctx.stroke();
 
       animFrameIdRef.current = requestAnimationFrame(renderFrame);
     };
 
-    renderFrame();
+    animFrameIdRef.current = requestAnimationFrame(renderFrame);
   }, []);
+
+  // Oscilloscope drawing animation for Active Recording (Hum Mode)
+  const drawOscilloscope = useCallback(() => {
+    if (animFrameIdRef.current) {
+      cancelAnimationFrame(animFrameIdRef.current);
+    }
+
+    const renderFrame = () => {
+      if (!analyserRef.current) return;
+      const canvas = canvasRef.current;
+      if (canvas) {
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          const bufferLength = analyserRef.current.fftSize;
+          const dataArray = new Uint8Array(bufferLength);
+          analyserRef.current.getByteTimeDomainData(dataArray);
+
+          ctx.fillStyle = '#09090b';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = '#f59e0b';
+          ctx.beginPath();
+
+          const sliceWidth = (canvas.width * 1.0) / bufferLength;
+          let x = 0;
+
+          for (let i = 0; i < bufferLength; i++) {
+            const v = dataArray[i] / 128.0;
+            const y = (v * canvas.height) / 2;
+
+            if (i === 0) {
+              ctx.moveTo(x, y);
+            } else {
+              ctx.lineTo(x, y);
+            }
+            x += sliceWidth;
+          }
+
+          ctx.lineTo(canvas.width, canvas.height / 2);
+          ctx.stroke();
+        }
+      }
+
+      animFrameIdRef.current = requestAnimationFrame(renderFrame);
+    };
+
+    animFrameIdRef.current = requestAnimationFrame(renderFrame);
+  }, []);
+
+  // START / STOP PRE-RECORDING PITCH PRACTICE
+  const startPitchPractice = useCallback(async () => {
+    stopAllPipelines();
+    setIsPracticingPitch(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false,
+          autoGainControl: false,
+          noiseSuppression: false,
+          channelCount: 1,
+        },
+      });
+      mediaStreamRef.current = stream;
+
+      const AudioContextClass =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const ctx = new AudioContextClass();
+      audioContextRef.current = ctx;
+
+      if (ctx.state === 'suspended') {
+        await ctx.resume();
+      }
+
+      const source = ctx.createMediaStreamSource(stream);
+
+      const filter = ctx.createBiquadFilter();
+      filter.type = activePreset.filterType;
+      filter.frequency.value = activePreset.filterFreq;
+      if (activePreset.filterQ) filter.Q.value = activePreset.filterQ;
+      filterNodeRef.current = filter;
+
+      const gainNode = ctx.createGain();
+      gainNode.gain.value = micGain;
+      micGainNodeRef.current = gainNode;
+
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      analyserRef.current = analyser;
+
+      const processor = ctx.createScriptProcessor(2048, 1, 1);
+      scriptProcessorRef.current = processor;
+
+      const silentGain = ctx.createGain();
+      silentGain.gain.value = 0;
+      silentGainRef.current = silentGain;
+
+      source.connect(filter);
+      filter.connect(gainNode);
+      gainNode.connect(analyser);
+      analyser.connect(processor);
+      processor.connect(silentGain);
+      silentGain.connect(ctx.destination);
+
+      const effectiveSilenceThreshold = 0.005;
+
+      const yin = new YinDetector({
+        sampleRate: ctx.sampleRate,
+        ...activePreset.yinConfig,
+        silenceThreshold: effectiveSilenceThreshold,
+      });
+      yinDetectorRef.current = yin;
+
+      let silenceFrames = 0;
+      processor.onaudioprocess = e => {
+        const channelData = e.inputBuffer.getChannelData(0);
+        const rms = calculateRms(channelData);
+        setCurrentRms(rms);
+
+        const pitchRes = yin.detectSmoothed(channelData);
+
+        if (pitchRes.isPitched && pitchRes.frequency !== null) {
+          silenceFrames = 0;
+          setIsVoiced(true);
+          setCurrentPitchHz(pitchRes.frequency);
+          setCurrentMidi(pitchRes.nearestMidi);
+          setCurrentCents(pitchRes.centsOffNearestMidi);
+        } else {
+          silenceFrames++;
+          if (silenceFrames > 4) {
+            setIsVoiced(false);
+            setCurrentPitchHz(null);
+            setCurrentMidi(null);
+            setCurrentCents(0);
+          }
+        }
+      };
+
+      drawPracticeOscilloscope();
+    } catch (err) {
+      console.error('Failed to start microphone practice:', err);
+      setIsPracticingPitch(false);
+      alert('無法啟動麥克風，請檢查瀏覽器麥克風權限。');
+    }
+  }, [activePreset, micGain, stopAllPipelines, drawPracticeOscilloscope]);
+
+  const stopPitchPractice = useCallback(() => {
+    stopAllPipelines();
+  }, [stopAllPipelines]);
+
+  // Keep practice animation running when practice mode is enabled and canvas mounts
+  useEffect(() => {
+    if (isPracticingPitch && analyserRef.current) {
+      drawPracticeOscilloscope();
+    }
+  }, [isPracticingPitch, drawPracticeOscilloscope]);
 
   // START RECORDING FLOW
   const beginActiveRecording = useCallback(async () => {
@@ -818,6 +994,10 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
         const ctx = new AudioContextClass();
         audioContextRef.current = ctx;
 
+        if (ctx.state === 'suspended') {
+          await ctx.resume();
+        }
+
         const source = ctx.createMediaStreamSource(stream);
 
         const filter = ctx.createBiquadFilter();
@@ -848,9 +1028,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
         processor.connect(silentGain);
         silentGain.connect(ctx.destination);
 
-        const baseSilenceThreshold = activePreset.yinConfig.silenceThreshold ?? 0.008;
-        const effectiveSilenceThreshold =
-          baseSilenceThreshold * Math.min(4.5, Math.max(1.0, 1.0 + (micGain - 1.0) * 0.25));
+        const effectiveSilenceThreshold = 0.005;
 
         const yin = new YinDetector({
           sampleRate: ctx.sampleRate,
@@ -879,6 +1057,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
         recorder.start();
         mediaRecorderRef.current = recorder;
 
+        let silenceFrames = 0;
         processor.onaudioprocess = e => {
           const channelData = e.inputBuffer.getChannelData(0);
           const rms = calculateRms(channelData);
@@ -889,15 +1068,19 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
           const isAuditioning = isAuditioningPitchRef.current;
 
           if (pitchRes.isPitched && pitchRes.frequency !== null) {
+            silenceFrames = 0;
             setIsVoiced(true);
             setCurrentPitchHz(pitchRes.frequency);
             setCurrentMidi(pitchRes.nearestMidi);
             setCurrentCents(pitchRes.centsOffNearestMidi);
           } else {
-            setIsVoiced(false);
-            setCurrentPitchHz(null);
-            setCurrentMidi(null);
-            setCurrentCents(0);
+            silenceFrames++;
+            if (silenceFrames > 4) {
+              setIsVoiced(false);
+              setCurrentPitchHz(null);
+              setCurrentMidi(null);
+              setCurrentCents(0);
+            }
           }
 
           // Ingest frame only if not actively auditioning pitch on keyboard
@@ -941,7 +1124,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
       return;
     }
 
-    const COUNT_IN_BEATS = 3;
+    const COUNT_IN_BEATS = countdownBeatsCount;
     setStep('COUNTING_IN');
     setCountdownBeat(COUNT_IN_BEATS);
 
@@ -966,7 +1149,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
         void beginActiveRecording();
       }
     }, secPerBeat * 1000);
-  }, [activeBpm, enableCountIn, stopAllPipelines, audioEngine, beginActiveRecording]);
+  }, [activeBpm, enableCountIn, countdownBeatsCount, stopAllPipelines, audioEngine, beginActiveRecording]);
 
   // Finish Recording & Transcribe
   const handleFinishRecording = useCallback(() => {
@@ -1526,22 +1709,48 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
                 </select>
               </div>
 
-              {/* Count-in Toggle */}
+              {/* Count-in Toggle & Beats Selector */}
               <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-mono font-bold text-zinc-400 uppercase">
-                  預備倒數
-                </label>
-                <button
-                  type="button"
-                  onClick={() => setEnableCountIn(!enableCountIn)}
-                  className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer text-center ${
-                    enableCountIn
-                      ? 'bg-amber-500/20 text-amber-600 dark:text-amber-300 border-amber-500/40'
-                      : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-500 border-zinc-300 dark:border-zinc-700'
-                  }`}
-                >
-                  {enableCountIn ? '開 (3 拍倒數)' : '關 (直接錄音)'}
-                </button>
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] font-mono font-bold text-zinc-400 uppercase">
+                    預備倒數 (Count-in)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setEnableCountIn(!enableCountIn)}
+                    className="text-[9px] font-bold text-zinc-500 hover:text-amber-500 transition-colors cursor-pointer"
+                  >
+                    {enableCountIn ? '關閉' : '開啟'}
+                  </button>
+                </div>
+                {enableCountIn ? (
+                  <div className="grid grid-cols-3 gap-1 bg-zinc-200/80 dark:bg-zinc-800/80 p-0.5 rounded-xl border border-zinc-300 dark:border-zinc-700">
+                    {([2, 3, 4] as const).map(b => (
+                      <button
+                        key={b}
+                        type="button"
+                        id={`deck-count-in-${b}-beats`}
+                        onClick={() => setCountdownBeatsCount(b)}
+                        className={`py-1 text-xs font-bold rounded-lg transition-all text-center cursor-pointer ${
+                          countdownBeatsCount === b
+                            ? 'bg-amber-500 text-zinc-950 font-black shadow-xs'
+                            : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-300/50 dark:hover:bg-zinc-700/50'
+                        }`}
+                        title={`錄音前預備 ${b} 拍倒數`}
+                      >
+                        {b} 拍
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setEnableCountIn(true)}
+                    className="px-2.5 py-1.5 rounded-xl text-xs font-bold border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 transition-colors cursor-pointer text-center"
+                  >
+                    關閉 (直接錄音)
+                  </button>
+                )}
               </div>
 
               {/* Audible Metronome Click */}
@@ -1615,6 +1824,206 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
                   <span className="text-xs font-mono font-bold text-amber-500 w-14 text-right">
                     {micGain.toFixed(1)}x
                   </span>
+                </div>
+
+                {/* PRE-RECORDING LIVE PITCH VISUAL DETECTOR & PRACTICE PANEL */}
+                <div className="flex flex-col gap-3 pt-3 mt-1 border-t border-zinc-200/80 dark:border-zinc-800/80">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2">
+                      <div
+                        className={`w-2.5 h-2.5 rounded-full ${
+                          isPracticingPitch ? 'bg-emerald-500 animate-ping' : 'bg-zinc-400'
+                        }`}
+                      />
+                      <span className="text-xs font-black text-zinc-800 dark:text-zinc-200 flex items-center gap-1.5">
+                        <Target className="w-4 h-4 text-emerald-500" />
+                        <span>音準即時視覺偵測與暖身練習</span>
+                      </span>
+                    </div>
+
+                    {/* Toggle Practice Mode Button */}
+                    <button
+                      id="deck-toggle-practice-btn"
+                      type="button"
+                      onClick={() => {
+                        if (isPracticingPitch) {
+                          stopPitchPractice();
+                        } else {
+                          void startPitchPractice();
+                        }
+                      }}
+                      className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs ${
+                        isPracticingPitch
+                          ? 'bg-rose-500 hover:bg-rose-600 text-white font-extrabold shadow-rose-500/20'
+                          : 'bg-emerald-600 hover:bg-emerald-500 text-white font-black shadow-emerald-600/20'
+                      }`}
+                    >
+                      {isPracticingPitch ? (
+                        <>
+                          <Square className="w-3.5 h-3.5 fill-current" />
+                          <span>停止音準練習 (Stop)</span>
+                        </>
+                      ) : (
+                        <>
+                          <Mic2 className="w-3.5 h-3.5" />
+                          <span>啟動即時音準檢測 (Practice Pitch)</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {!isPracticingPitch ? (
+                    <div className="p-3 bg-white dark:bg-zinc-950/60 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-800 text-xs text-zinc-600 dark:text-zinc-400 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex items-start gap-2.5">
+                        <Sparkles className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="font-bold text-zinc-700 dark:text-zinc-300">
+                            在正式錄製前先練習音準與發聲穩定度
+                          </p>
+                          <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
+                            點擊上方啟動後對著麥克風哼唱，可即時查看唱名音高、音分指針偏離度與下方琴鍵即時對齊，確保轉譜精準度。
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-3.5 p-4 bg-zinc-950 rounded-2xl border border-emerald-500/40 text-zinc-100 shadow-inner">
+                      {/* Upper row: Pitch degree, Note name, Accuracy evaluation */}
+                      <div className="flex items-center justify-between flex-wrap gap-3">
+                        <div className="flex items-baseline gap-3">
+                          <span className="text-4xl sm:text-5xl font-black text-emerald-400 font-mono tracking-tight">
+                            {isVoiced ? activeSolfegInfo.noteNum : '-'}
+                          </span>
+                          <div className="flex flex-col">
+                            <span className="text-base font-extrabold text-zinc-200">
+                              {isVoiced
+                                ? activeSolfegInfo.solfege
+                                : '靜音中 · 請對麥克風發聲'}
+                            </span>
+                            <span className="text-xs font-mono text-zinc-400">
+                              {isVoiced && currentMidi !== null
+                                ? `${getMidiNoteInfo(currentPitchHz || 0)?.noteName || ''}`
+                                : '對麥克風哼唱 (如 da / la)'}
+                            </span>
+                          </div>
+                          {isVoiced && activeSolfegInfo.octaveDots !== 0 && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold self-center">
+                              {activeSolfegInfo.octaveDots > 0
+                                ? `+${activeSolfegInfo.octaveDots} 八度`
+                                : `${activeSolfegInfo.octaveDots} 八度`}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Accuracy badge & Frequency readout */}
+                        <div className="flex flex-col items-end gap-1">
+                          <div className="flex items-center gap-2">
+                            {isVoiced ? (
+                              <span
+                                className={`px-2.5 py-0.5 rounded-full text-xs font-extrabold border font-mono ${
+                                  Math.abs(currentCents) <= 10
+                                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-xs'
+                                    : Math.abs(currentCents) <= 25
+                                      ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                                      : 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                                }`}
+                              >
+                                {Math.abs(currentCents) <= 10
+                                  ? '🎯 精準 In-Tune (±10¢)'
+                                  : Math.abs(currentCents) <= 25
+                                    ? `⚠️ 微偏 Slight Drift (${currentCents > 0 ? '+' : ''}${currentCents}¢)`
+                                    : currentCents > 0
+                                      ? `❌ 偏高 Sharp (+${currentCents}¢)`
+                                      : `❌ 偏低 Flat (${currentCents}¢)`}
+                              </span>
+                            ) : (
+                              <span className="text-xs font-mono text-zinc-500">等待唱音輸入...</span>
+                            )}
+                          </div>
+                          <span className="text-xs font-mono text-zinc-400">
+                            {currentPitchHz ? `${currentPitchHz.toFixed(1)} Hz` : '--.- Hz'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Cents Deviation Gauge & Needle */}
+                      <div className="flex flex-col gap-1">
+                        <div className="flex justify-between text-[10px] font-mono font-bold text-zinc-400 px-1">
+                          <span>-50¢ 偏低</span>
+                          <span className="text-emerald-400 font-black">0¢ (標準音)</span>
+                          <span>+50¢ 偏高</span>
+                        </div>
+                        <div className="relative w-full h-3.5 bg-zinc-900 rounded-full overflow-hidden flex items-center border border-zinc-800">
+                          {/* Target in-tune zone (±10 cents) */}
+                          <div className="absolute left-[40%] right-[40%] top-0 bottom-0 bg-emerald-500/25 border-x border-emerald-500/50" />
+                          <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-emerald-400 z-10" />
+                          {isVoiced && (
+                            <div
+                              className={`absolute top-0 bottom-0 w-2.5 rounded-full shadow-lg transition-all duration-75 ${
+                                Math.abs(currentCents) <= 10
+                                  ? 'bg-emerald-400 shadow-emerald-400/50 ring-1 ring-white'
+                                  : Math.abs(currentCents) <= 25
+                                    ? 'bg-amber-400 shadow-amber-400/50'
+                                    : 'bg-rose-400 shadow-rose-400/50'
+                              }`}
+                              style={{
+                                left: `calc(${50 + (Math.max(-50, Math.min(50, currentCents)) / 50) * 45}% - 5px)`,
+                              }}
+                            />
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Waveform Canvas & Volume Level Meter */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 items-center pt-1">
+                        <div className="sm:col-span-2 h-11 bg-zinc-900/90 rounded-xl overflow-hidden border border-zinc-800/80">
+                          <canvas
+                            ref={practiceCanvasRef}
+                            width={500}
+                            height={44}
+                            className="w-full h-full"
+                          />
+                        </div>
+
+                        {/* Input RMS Volume Gauge */}
+                        <div className="flex flex-col gap-1 p-2 bg-zinc-900/80 rounded-xl border border-zinc-800">
+                          <div className="flex items-center justify-between text-[10px] font-mono text-zinc-400">
+                            <span>輸入音量 (RMS)</span>
+                            <span className="font-bold text-zinc-300">
+                              {(currentRms * 100).toFixed(1)}%
+                            </span>
+                          </div>
+                          <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full transition-all duration-75 rounded-full ${
+                                currentRms > 0.3
+                                  ? 'bg-rose-500'
+                                  : currentRms > 0.15
+                                    ? 'bg-amber-400'
+                                    : 'bg-emerald-500'
+                              }`}
+                              style={{ width: `${Math.min(100, (currentRms / 0.25) * 100)}%` }}
+                            />
+                          </div>
+                          <span className="text-[9px] text-zinc-500 truncate">
+                            {currentRms < 0.008
+                              ? '環境靜音'
+                              : currentRms > 0.3
+                                ? '⚠️ 音量過大 (請調降增益)'
+                                : '✅ 收音良好'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Practice Instruction Hint */}
+                      <div className="flex items-center gap-1.5 text-[11px] text-emerald-300/90 bg-emerald-950/40 p-2 rounded-lg border border-emerald-800/40">
+                        <Sparkles className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                        <span>
+                          <strong>音準對齊練習：</strong>點擊下方鋼琴琴鍵試聽標準音，對著麥克風唱出相同音高，讓指針居中、琴鍵亮起綠色「唱音」！
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             ) : (
@@ -1692,6 +2101,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
                 octaveBedView={octaveBedView}
                 onOctaveBedViewChange={setOctaveBedView}
                 activeMidiSet={activeMidiSet}
+                detectedPitchMidi={activeMode === 'hum' && isVoiced ? currentMidi : null}
                 onNoteDown={handlePianoNoteDown}
                 onNoteUp={handlePianoNoteUp}
                 mode={activeMode === 'hum' ? 'align' : 'record'}
@@ -1738,7 +2148,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
         {step === 'COUNTING_IN' && (
           <div className="flex flex-col items-center justify-center p-12 gap-6 my-4 animate-in zoom-in-95 duration-200">
             <span className="text-xs font-mono font-bold uppercase tracking-widest text-amber-500">
-              準備就緒 · 預備拍
+              準備就緒 · 預備拍 ({countdownBeatsCount} 拍倒數)
             </span>
             <div className="w-32 h-32 rounded-full bg-amber-500 text-zinc-950 flex items-center justify-center text-7xl font-black font-mono shadow-2xl shadow-amber-500/30 ring-8 ring-amber-400/30 animate-pulse">
               {countdownBeat}

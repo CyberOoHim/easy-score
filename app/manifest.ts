@@ -1,0 +1,64 @@
+import type { MetadataRoute } from 'next';
+
+export default function manifest(): MetadataRoute.Manifest {
+  return {
+    name: 'Hum & Keyboard Score Transcriber',
+    short_name: 'Score Transcriber',
+    description: 'Real-time vocal humming and keyboard/MIDI score transcription studio into numbered musical notation with interactive playback and MIDI export.',
+    start_url: '/',
+    scope: '/',
+    display: 'standalone',
+    orientation: 'any',
+    background_color: '#09090b',
+    theme_color: '#f59e0b',
+    categories: ['music', 'audio', 'utilities'],
+    icons: [
+      {
+        src: '/icons/icon-192x192.png',
+        sizes: '192x192',
+        type: 'image/png',
+        purpose: 'any',
+      },
+      {
+        src: '/icons/icon-512x512.png',
+        sizes: '512x512',
+        type: 'image/png',
+        purpose: 'any',
+      },
+      {
+        src: '/icons/icon-maskable-192x192.png',
+        sizes: '192x192',
+        type: 'image/png',
+        purpose: 'maskable',
+      },
+      {
+        src: '/icons/icon-maskable-512x512.png',
+        sizes: '512x512',
+        type: 'image/png',
+        purpose: 'maskable',
+      },
+      {
+        src: '/icons/icon.svg',
+        sizes: 'any',
+        type: 'image/svg+xml',
+        purpose: 'any',
+      },
+    ],
+    shortcuts: [
+      {
+        name: 'Hum to Score',
+        short_name: 'Hum',
+        description: 'Transcribe melody from vocal humming or acoustic instrument',
+        url: '/#hum',
+        icons: [{ src: '/icons/icon-192x192.png', sizes: '192x192' }],
+      },
+      {
+        name: 'Keyboard to Score',
+        short_name: 'Keyboard',
+        description: 'Transcribe melody from screen piano, QWERTY typing, or MIDI',
+        url: '/#keyboard',
+        icons: [{ src: '/icons/icon-192x192.png', sizes: '192x192' }],
+      },
+    ],
+  };
+}
