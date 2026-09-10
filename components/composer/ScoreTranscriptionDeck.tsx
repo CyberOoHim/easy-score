@@ -593,6 +593,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
     keyEngineRef.current = engine;
 
     return () => {
+      engine.destroy();
       if (engine.isRecordingActive()) {
         engine.stopRecording();
       }
@@ -1573,11 +1574,19 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
       }
     };
 
+    const handleBlur = () => {
+      if (step === 'RECORDING' && activeMode === 'keyboard' && keyEngineRef.current) {
+        keyEngineRef.current.releaseAllActiveKeys();
+      }
+    };
+
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleBlur);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleBlur);
     };
   }, [
     isOpen,

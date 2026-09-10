@@ -365,6 +365,116 @@ describe('Stage 1: Keyboard Event Engine (lib/keyboard/keyEventEngine.ts)', () =
     assert.equal(segs.length, 1);
     assert.equal(segs[0].durationMs, 500);
   });
+
+  it('suppresses duplicate note-on and note-split when OS auto-repeat sends repeat: false', () => {
+    const clock = new VirtualClock();
+    let noteOnCount = 0;
+    const engine = new KeyEventEngine(
+      { keySignature: 'C' },
+      {
+        onNoteOn: () => {
+          noteOnCount++;
+        },
+      },
+      clock.now
+    );
+
+    // Initial press (t = 1000)
+    engine.handleKeyDown({ code: 'KeyA', repeat: false }, clock.now());
+    assert.equal(noteOnCount, 1);
+    clock.advance(250);
+
+    // Buggy OS/IME repeat event where repeat is false
+    engine.handleKeyDown({ code: 'KeyA', repeat: false }, clock.now());
+    clock.advance(250);
+    // Still only 1 noteOn trigger!
+    assert.equal(noteOnCount, 1);
+
+    // Third repeat event with repeat: false
+    engine.handleKeyDown({ code: 'KeyA', repeat: false }, clock.now());
+    clock.advance(300);
+    assert.equal(noteOnCount, 1);
+
+    // Physical key release at t = 1800 (800ms total press)
+    engine.handleKeyUp({ code: 'KeyA' }, clock.now());
+
+    const segs = engine.getSegments();
+    assert.equal(segs.length, 1, 'Long press should remain a single note, not split');
+    assert.equal(segs[0].durationMs, 800, 'Note should sustain for full duration');
+    assert.equal(noteOnCount, 1, 'Synthesizer should play sound exactly once');
+  });
+
+  it('filters out Linux X11 auto-repeat release/press bounce and prevents double sound', () => {
+    const clock = new VirtualClock();
+    let noteOnCount = 0;
+    const engine = new KeyEventEngine(
+      { keySignature: 'C' },
+      {
+        onNoteOn: () => {
+          noteOnCount++;
+        },
+      },
+      clock.now
+    );
+
+    // User presses and holds KeyA at t = 1000
+    engine.handleKeyDown({ code: 'KeyA', repeat: false }, 1000);
+    assert.equal(noteOnCount, 1);
+
+    // At t = 1500, Linux X11 auto-repeat fires fake KeyRelease followed by KeyPress 2ms later
+    engine.handleKeyUp({ code: 'KeyA' }, 1500);
+    engine.handleKeyDown({ code: 'KeyA', repeat: false }, 1502);
+
+    // Sound should NOT trigger a second time!
+    assert.equal(noteOnCount, 1, 'Auto-repeat bounce must not trigger a second sound');
+
+    // Second auto-repeat tick at t = 1535, fake KeyRelease followed by KeyPress 1ms later
+    engine.handleKeyUp({ code: 'KeyA' }, 1535);
+    engine.handleKeyDown({ code: 'KeyA', repeat: false }, 1536);
+    assert.equal(noteOnCount, 1);
+
+    // Third auto-repeat tick at t = 1570
+    engine.handleKeyUp({ code: 'KeyA' }, 1570);
+    engine.handleKeyDown({ code: 'KeyA', repeat: false }, 1572);
+    assert.equal(noteOnCount, 1);
+
+    // User finally releases key at t = 2000 (total held duration: 1000ms)
+    engine.handleKeyUp({ code: 'KeyA' }, 2000);
+
+    const segs = engine.getSegments();
+    assert.equal(segs.length, 1, 'Long press on Linux X11 must remain 1 note, not split into two');
+    assert.equal(segs[0].durationMs, 1000, 'Total sustained duration must be 1000ms');
+    assert.equal(noteOnCount, 1, 'Exactly one sound heard during the entire long press');
+  });
+
+  it('preserves distinct repeated key taps separated by normal human pause', () => {
+    const clock = new VirtualClock();
+    let noteOnCount = 0;
+    const engine = new KeyEventEngine(
+      { keySignature: 'C', filterOneFingerGaps: false, extendLegatoGaps: false },
+      {
+        onNoteOn: () => {
+          noteOnCount++;
+        },
+      },
+      clock.now
+    );
+
+    // First tap: 1000ms - 1300ms (300ms note)
+    engine.handleKeyDown({ code: 'KeyA' }, 1000);
+    engine.handleKeyUp({ code: 'KeyA' }, 1300);
+
+    // Intentional pause of 150ms (> 45ms debounce window)
+    // Second tap: 1450ms - 1750ms (300ms note)
+    engine.handleKeyDown({ code: 'KeyA' }, 1450);
+    engine.handleKeyUp({ code: 'KeyA' }, 1750);
+
+    const segs = engine.getSegments();
+    assert.equal(noteOnCount, 2, 'Two distinct key taps should trigger two sounds');
+    assert.equal(segs.length, 2, 'Two distinct key taps should produce two notes');
+    assert.equal(segs[0].durationMs, 300);
+    assert.equal(segs[1].durationMs, 300);
+  });
 });
 
 describe('Stage 2: Quantization & Barline Packaging Engine', () => {

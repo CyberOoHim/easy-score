@@ -293,7 +293,8 @@ export const PianoBed: React.FC<PianoBedProps> = ({
                   e.preventDefault();
                   handleKeyPointerLeave(e, wk.midi);
                 }}
-                className={`flex-1 flex flex-col justify-end items-center pb-2 border-r border-zinc-300 dark:border-zinc-800 rounded-b-lg cursor-pointer transition-all duration-75 relative ${
+                onContextMenu={e => e.preventDefault()}
+                className={`flex-1 flex flex-col justify-end items-center pb-2 border-r border-zinc-300 dark:border-zinc-800 rounded-b-lg cursor-pointer select-none touch-none transition-all duration-75 relative ${
                   isActive
                     ? mode === 'align'
                       ? 'bg-cyan-300 dark:bg-cyan-400 text-zinc-950 shadow-md ring-2 ring-cyan-300 transform translate-y-0.5'
@@ -371,12 +372,13 @@ export const PianoBed: React.FC<PianoBedProps> = ({
                     e.preventDefault();
                     handleKeyPointerLeave(e, bk.midi);
                   }}
+                  onContextMenu={e => e.preventDefault()}
                   style={{
                     left: `${leftPos}%`,
                     width: `${octWidthPercent * 0.09}%`,
                     height: '62%',
                   }}
-                  className={`absolute top-0 z-10 flex flex-col justify-end items-center pb-1.5 rounded-b-md cursor-pointer transition-all duration-75 ${
+                  className={`absolute top-0 z-10 flex flex-col justify-end items-center pb-1.5 rounded-b-md cursor-pointer select-none touch-none transition-all duration-75 ${
                     isActive
                       ? mode === 'align'
                         ? 'bg-cyan-400 text-zinc-950 shadow-lg ring-2 ring-cyan-300 transform translate-y-0.5'
