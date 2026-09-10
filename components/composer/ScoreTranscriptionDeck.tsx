@@ -61,6 +61,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   ChevronDown,
+  ChevronUp,
   ArrowUp,
   ArrowDown,
   Music2,
@@ -280,6 +281,9 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
 
   // Active played notes state on piano bed
   const [activeMidiSet, setActiveMidiSet] = useState<Set<number>>(new Set());
+
+  // Collapsible Advanced Settings in Setup mode
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState<boolean>(false);
 
   // =========================================================================
   // HUM MODE STATES
@@ -1733,839 +1737,366 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
       {/* ========================================================================= */}
       <div className="p-4 sm:p-6 flex flex-col gap-6">
         {/* ======================================================================= */}
-        {/* STEP 1: SETUP                                                           */}
+        {/* UNIFIED RECORDING DECK LAYOUT (SETUP / COUNTING_IN / RECORDING)         */}
+        {/* Zero-shift architecture: fixed slots guarantee visual stability         */}
         {/* ======================================================================= */}
-        {step === 'SETUP' && (
-          <div className="flex flex-col gap-6 animate-in fade-in duration-200">
-            {/* Unified Score Parameters Bar */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3 p-4 bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-800/80 rounded-2xl">
-              {/* Key Signature */}
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-mono font-bold text-zinc-400 uppercase">
-                  主音調號 (Key)
-                </label>
-                <select
-                  id="deck-setup-key-select"
-                  value={activeKey}
-                  onChange={e => setActiveKey(e.target.value as KeySignature)}
-                  className="px-2.5 py-1.5 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-xl text-xs font-bold text-zinc-900 dark:text-zinc-100 cursor-pointer"
-                >
-                  {CHROMATIC_KEYS.map(k => (
-                    <option key={k} value={k}>
-                      1 = {k}
-                    </option>
-                  ))}
-                </select>
-              </div>
+        {step !== 'REVIEW' && (
+          <div className="flex flex-col gap-4 animate-in fade-in duration-200">
 
-              {/* Time Signature */}
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-mono font-bold text-zinc-400 uppercase">
-                  拍號 (Meter)
-                </label>
-                <select
-                  id="deck-setup-time-sig-select"
-                  value={activeTimeSignature}
-                  onChange={e => setActiveTimeSignature(e.target.value as TimeSignature)}
-                  className="px-2.5 py-1.5 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-xl text-xs font-bold text-zinc-900 dark:text-zinc-100 cursor-pointer"
-                >
-                  {STANDARD_TIME_SIGNATURES.map(ts => (
-                    <option key={ts.value} value={ts.value}>
-                      {ts.label} 拍
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Tempo (BPM) */}
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-mono font-bold text-zinc-400 uppercase">
-                  速度 ({activeBpm} BPM)
-                </label>
-                <input
-                  id="deck-setup-bpm-slider"
-                  type="range"
-                  min="40"
-                  max="200"
-                  value={activeBpm}
-                  onChange={e => setActiveBpm(parseInt(e.target.value, 10))}
-                  className="accent-amber-500 w-full h-2 bg-zinc-300 dark:bg-zinc-700 rounded-lg cursor-pointer my-auto"
-                />
-              </div>
-
-              {/* Quantize Grid */}
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-mono font-bold text-zinc-400 uppercase">
-                  量化精度 (Grid)
-                </label>
-                <select
-                  id="deck-setup-grid-select"
-                  value={quantizeGrid}
-                  onChange={e => setQuantizeGrid(e.target.value as QuantizeGrid)}
-                  className="px-2.5 py-1.5 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-xl text-xs font-bold text-zinc-900 dark:text-zinc-100 cursor-pointer"
-                >
-                  <option value="quarter">四分音符 (¼ 拍)</option>
-                  <option value="eighth">八分音符 (⅛ 拍)</option>
-                  <option value="sixteenth">十六分音符 (¹/₁₆ 拍)</option>
-                </select>
-              </div>
-
-              {/* Count-in Toggle & Beats Selector */}
-              <div className="flex flex-col gap-1">
-                <div className="flex items-center justify-between">
-                  <label className="text-[10px] font-mono font-bold text-zinc-400 uppercase">
-                    預備倒數 (Count-in)
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => setEnableCountIn(!enableCountIn)}
-                    className="text-[9px] font-bold text-zinc-500 hover:text-amber-500 transition-colors cursor-pointer"
-                  >
-                    {enableCountIn ? '關閉' : '開啟'}
-                  </button>
-                </div>
-                {enableCountIn ? (
-                  <div className="grid grid-cols-3 gap-1 bg-zinc-200/80 dark:bg-zinc-800/80 p-0.5 rounded-xl border border-zinc-300 dark:border-zinc-700">
-                    {([2, 3, 4] as const).map(b => (
-                      <button
-                        key={b}
-                        type="button"
-                        id={`deck-count-in-${b}-beats`}
-                        onClick={() => setCountdownBeatsCount(b)}
-                        className={`py-1 text-xs font-bold rounded-lg transition-all text-center cursor-pointer ${
-                          countdownBeatsCount === b
-                            ? 'bg-amber-500 text-zinc-950 font-black shadow-xs'
-                            : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-300/50 dark:hover:bg-zinc-700/50'
-                        }`}
-                        title={`錄音前預備 ${b} 拍倒數`}
+            {/* ── SLOT 1: STATUS / SETUP STRIP (Fixed 64px) ────────────────────── */}
+            <div className="min-h-[64px] flex items-center justify-between px-4 py-2.5 bg-zinc-50 dark:bg-zinc-900/70 border border-zinc-200 dark:border-zinc-800 rounded-2xl flex-wrap gap-2.5 box-border">
+              {step === 'SETUP' ? (
+                <>
+                  {/* Left: Quick Params Badges */}
+                  <div className="flex items-center gap-2 flex-wrap text-xs">
+                    {/* Key badge */}
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 font-bold">
+                      <span className="text-[10px] text-zinc-400 font-mono">調號</span>
+                      <select
+                        id="deck-setup-key-select"
+                        value={activeKey}
+                        onChange={e => setActiveKey(e.target.value as KeySignature)}
+                        className="bg-transparent text-amber-600 dark:text-amber-400 font-black cursor-pointer outline-hidden"
                       >
-                        {b} 拍
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setEnableCountIn(true)}
-                    className="px-2.5 py-1.5 rounded-xl text-xs font-bold border border-zinc-300 dark:border-zinc-700 bg-zinc-200 dark:bg-zinc-800 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 transition-colors cursor-pointer text-center"
-                  >
-                    關閉 (直接錄音)
-                  </button>
-                )}
-              </div>
-
-              {/* Audible Metronome Click */}
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-mono font-bold text-zinc-400 uppercase">
-                  節拍提示聲
-                </label>
-                <button
-                  type="button"
-                  onClick={() => setAudibleClickDuringRecording(!audibleClickDuringRecording)}
-                  className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer text-center ${
-                    audibleClickDuringRecording
-                      ? 'bg-amber-500/20 text-amber-600 dark:text-amber-300 border-amber-500/40'
-                      : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-500 border-zinc-300 dark:border-zinc-700'
-                  }`}
-                >
-                  {audibleClickDuringRecording ? '🔊 滴答聲' : '🔇 靜音 (僅閃燈)'}
-                </button>
-              </div>
-            </div>
-
-            {/* Mode-Specific Settings Panels */}
-            {activeMode === 'hum' ? (
-              <div className="flex flex-col gap-4 p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-900/40 border border-zinc-200 dark:border-zinc-800/60">
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <span className="text-xs font-black text-zinc-700 dark:text-zinc-300 flex items-center gap-1.5">
-                    <Mic className="w-4 h-4 text-amber-500" />
-                    <span>收音音源與靈敏度增益</span>
-                  </span>
-                  <div className="flex items-center gap-2 text-xs font-mono text-zinc-400">
-                    <Headphones className="w-3.5 h-3.5 text-amber-400" />
-                    <span>建議佩戴耳機以避免聲音反饋</span>
-                  </div>
-                </div>
-
-                {/* Preset Chips */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {INSTRUMENT_PRESETS.map(p => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => setPresetId(p.id)}
-                      className={`flex flex-col p-3 rounded-xl border text-left transition-all cursor-pointer ${
-                        presetId === p.id
-                          ? 'bg-amber-500/15 border-amber-500 text-amber-800 dark:text-amber-300 shadow-sm ring-1 ring-amber-400/40'
-                          : 'bg-white dark:bg-zinc-900/60 border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400 hover:border-zinc-300'
-                      }`}
-                    >
-                      <div className="flex items-center gap-1.5 text-xs font-black">
-                        <span>{p.icon}</span>
-                        <span>{p.nameZh}</span>
-                      </div>
-                      <span className="text-[10px] text-zinc-500 mt-1 line-clamp-1">{p.tips}</span>
-                    </button>
-                  ))}
-                </div>
-
-                {/* Mic Gain Slider */}
-                <div className="flex items-center gap-3 pt-1">
-                  <span className="text-xs font-bold text-zinc-500 shrink-0">麥克風放大增益:</span>
-                  <input
-                    id="deck-hum-gain-slider"
-                    type="range"
-                    min="1"
-                    max="20"
-                    step="0.5"
-                    value={micGain}
-                    onChange={e => handleMicGainChange(parseFloat(e.target.value))}
-                    className="accent-amber-500 flex-1 h-2 bg-zinc-300 dark:bg-zinc-700 rounded-lg cursor-pointer"
-                  />
-                  <span className="text-xs font-mono font-bold text-amber-500 w-14 text-right">
-                    {micGain.toFixed(1)}x
-                  </span>
-                </div>
-
-                {/* Pitch Stabilizer Slider & Quick Presets */}
-                <div className="flex flex-col gap-2 pt-2 border-t border-zinc-200/60 dark:border-zinc-800/60">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                      <SlidersHorizontal className="w-3.5 h-3.5 text-amber-500" />
-                      <span className="text-xs font-bold text-zinc-700 dark:text-zinc-300">
-                        音準穩定度 (Pitch Stabilizer):
-                      </span>
+                        {CHROMATIC_KEYS.map(k => (
+                          <option key={k} value={k} className="bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100">
+                            1 = {k}
+                          </option>
+                        ))}
+                      </select>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`text-[11px] font-bold px-2 py-0.5 rounded-md ${
-                          stabilizerStrength <= 0.3
-                            ? 'bg-blue-500/15 text-blue-500 dark:text-blue-400 border border-blue-500/30'
-                            : stabilizerStrength <= 0.65
-                              ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
-                              : 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
-                        }`}
+
+                    {/* Meter badge */}
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 font-bold">
+                      <span className="text-[10px] text-zinc-400 font-mono">拍號</span>
+                      <select
+                        id="deck-setup-time-sig-select"
+                        value={activeTimeSignature}
+                        onChange={e => setActiveTimeSignature(e.target.value as TimeSignature)}
+                        className="bg-transparent text-amber-600 dark:text-amber-400 font-black cursor-pointer outline-hidden"
                       >
-                        {stabilizerStrength <= 0.3
-                          ? '⚡ 即時靈敏 (Fast)'
-                          : stabilizerStrength <= 0.65
-                            ? '🎯 標準平穩 (Smooth)'
-                            : '🛡️ 極致防抖 (Ultra)'}
-                      </span>
-                      <span className="text-xs font-mono font-black text-amber-500 w-12 text-right">
-                        {Math.round(stabilizerStrength * 100)}%
-                      </span>
+                        {STANDARD_TIME_SIGNATURES.map(ts => (
+                          <option key={ts.value} value={ts.value} className="bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100">
+                            {ts.label} 拍
+                          </option>
+                        ))}
+                      </select>
                     </div>
-                  </div>
 
-                  <div className="flex items-center gap-3">
-                    <span className="text-[10px] text-zinc-400 shrink-0">即時靈敏 (0%)</span>
-                    <input
-                      id="deck-hum-stabilizer-slider"
-                      type="range"
-                      min="0"
-                      max="1"
-                      step="0.05"
-                      value={stabilizerStrength}
-                      onChange={e => handleStabilizerChange(parseFloat(e.target.value))}
-                      className="accent-amber-500 flex-1 h-2 bg-zinc-300 dark:bg-zinc-700 rounded-lg cursor-pointer"
-                    />
-                    <span className="text-[10px] text-zinc-400 shrink-0">極致防抖 (100%)</span>
-                  </div>
-
-                  {/* Quick Preset Chips */}
-                  <div className="flex items-center gap-2 pt-0.5 flex-wrap">
-                    <span className="text-[10px] text-zinc-500 shrink-0 font-medium">快捷預設:</span>
-                    <button
-                      type="button"
-                      onClick={() => handleStabilizerChange(0.25)}
-                      className={`px-2 py-0.5 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
-                        Math.abs(stabilizerStrength - 0.25) < 0.04
-                          ? 'bg-amber-500 text-zinc-950 font-black shadow-xs'
-                          : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700'
-                      }`}
-                    >
-                      輕度 25% (裝飾音 / 快歌)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleStabilizerChange(0.50)}
-                      className={`px-2 py-0.5 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
-                        Math.abs(stabilizerStrength - 0.50) < 0.04
-                          ? 'bg-amber-500 text-zinc-950 font-black shadow-xs'
-                          : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700'
-                      }`}
-                    >
-                      標準 50% (平衡防抖 · 預設)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleStabilizerChange(0.80)}
-                      className={`px-2 py-0.5 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
-                        Math.abs(stabilizerStrength - 0.80) < 0.04
-                          ? 'bg-amber-500 text-zinc-950 font-black shadow-xs'
-                          : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700'
-                      }`}
-                    >
-                      高強度 80% (鎖定防抖 · 長音)
-                    </button>
-                  </div>
-                </div>
-
-                {/* PRE-RECORDING LIVE PITCH VISUAL DETECTOR & PRACTICE PANEL */}
-                <div className="flex flex-col gap-3 pt-3 mt-1 border-t border-zinc-200/80 dark:border-zinc-800/80">
-                  <div className="flex items-center justify-between flex-wrap gap-2">
-                    <div className="flex items-center gap-2">
-                      <div
-                        className={`w-2.5 h-2.5 rounded-full ${
-                          isPracticingPitch ? 'bg-emerald-500 animate-ping' : 'bg-zinc-400'
-                        }`}
+                    {/* BPM badge */}
+                    <div className="flex items-center gap-2 px-2.5 py-1 rounded-xl bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 font-bold">
+                      <span className="text-[10px] text-zinc-400 font-mono">速度</span>
+                      <span className="font-mono font-black text-amber-600 dark:text-amber-400 min-w-[36px]">
+                        {activeBpm}
+                      </span>
+                      <input
+                        id="deck-setup-bpm-slider"
+                        type="range"
+                        min="40"
+                        max="200"
+                        value={activeBpm}
+                        onChange={e => setActiveBpm(parseInt(e.target.value, 10))}
+                        className="accent-amber-500 w-16 sm:w-20 h-1.5 bg-zinc-200 dark:bg-zinc-700 rounded-lg cursor-pointer"
+                        title={`速度: ${activeBpm} BPM`}
                       />
-                      <span className="text-xs font-black text-zinc-800 dark:text-zinc-200 flex items-center gap-1.5">
-                        <Target className="w-4 h-4 text-emerald-500" />
-                        <span>音準即時視覺偵測與暖身練習</span>
-                      </span>
                     </div>
 
-                    {/* Toggle Practice Mode Button */}
+                    {/* Grid badge */}
+                    <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 font-bold">
+                      <span className="text-[10px] text-zinc-400 font-mono">量化</span>
+                      <select
+                        id="deck-setup-grid-select"
+                        value={quantizeGrid}
+                        onChange={e => setQuantizeGrid(e.target.value as QuantizeGrid)}
+                        className="bg-transparent text-zinc-700 dark:text-zinc-300 font-bold cursor-pointer outline-hidden text-xs"
+                      >
+                        <option value="quarter" className="bg-white dark:bg-zinc-900">¼ 拍 (四分)</option>
+                        <option value="eighth" className="bg-white dark:bg-zinc-900">⅛ 拍 (八分)</option>
+                        <option value="sixteenth" className="bg-white dark:bg-zinc-900">¹/₁₆ 拍 (十六分)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Right: Advanced Settings Expander Toggle */}
+                  <div className="flex items-center gap-2">
                     <button
-                      id="deck-toggle-practice-btn"
                       type="button"
-                      onClick={() => {
-                        if (isPracticingPitch) {
-                          stopPitchPractice();
-                        } else {
-                          void startPitchPractice();
-                        }
-                      }}
-                      className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs ${
-                        isPracticingPitch
-                          ? 'bg-rose-500 hover:bg-rose-600 text-white font-extrabold shadow-rose-500/20'
-                          : 'bg-emerald-600 hover:bg-emerald-500 text-white font-black shadow-emerald-600/20'
+                      id="deck-toggle-advanced-settings-btn"
+                      onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                        showAdvancedSettings
+                          ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/40 shadow-xs'
+                          : 'bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-zinc-700 hover:text-zinc-900 dark:hover:text-zinc-200'
                       }`}
                     >
-                      {isPracticingPitch ? (
-                        <>
-                          <Square className="w-3.5 h-3.5 fill-current" />
-                          <span>停止音準練習 (Stop)</span>
-                        </>
+                      <SlidersHorizontal className="w-3.5 h-3.5" />
+                      <span>{showAdvancedSettings ? '收起進階參數' : '進階設定'}</span>
+                      {showAdvancedSettings ? (
+                        <ChevronUp className="w-3.5 h-3.5" />
                       ) : (
-                        <>
-                          <Mic2 className="w-3.5 h-3.5" />
-                          <span>啟動即時音準檢測 (Practice Pitch)</span>
-                        </>
+                        <ChevronDown className="w-3.5 h-3.5" />
                       )}
                     </button>
                   </div>
-
-                  {!isPracticingPitch ? (
-                    <div className="p-3 bg-white dark:bg-zinc-950/60 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-800 text-xs text-zinc-600 dark:text-zinc-400 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div className="flex items-start gap-2.5">
-                        <Sparkles className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-                        <div>
-                          <p className="font-bold text-zinc-700 dark:text-zinc-300">
-                            在正式錄製前先練習音準與發聲穩定度
-                          </p>
-                          <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
-                            點擊上方啟動後對著麥克風哼唱，可即時查看唱名音高、音分指針偏離度與下方琴鍵即時對齊，確保轉譜精準度。
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col gap-3.5 p-4 bg-zinc-950 rounded-2xl border border-emerald-500/40 text-zinc-100 shadow-inner">
-                      {/* Upper row: Pitch degree, Note name, Accuracy evaluation */}
-                      <div className="flex items-center justify-between flex-wrap gap-3">
-                        <div className="flex items-baseline gap-3">
-                          <span className="text-4xl sm:text-5xl font-black text-emerald-400 font-mono tracking-tight">
-                            {isVoiced ? activeSolfegInfo.noteNum : '-'}
-                          </span>
-                          <div className="flex flex-col">
-                            <span className="text-base font-extrabold text-zinc-200">
-                              {isVoiced
-                                ? activeSolfegInfo.solfege
-                                : '靜音中 · 請對麥克風發聲'}
-                            </span>
-                            <span className="text-xs font-mono text-zinc-400">
-                              {isVoiced && currentMidi !== null
-                                ? `${getMidiNoteInfo(currentPitchHz || 0)?.noteName || ''}`
-                                : '對麥克風哼唱 (如 da / la)'}
-                            </span>
-                          </div>
-                          {isVoiced && activeSolfegInfo.octaveDots !== 0 && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold self-center">
-                              {activeSolfegInfo.octaveDots > 0
-                                ? `+${activeSolfegInfo.octaveDots} 八度`
-                                : `${activeSolfegInfo.octaveDots} 八度`}
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Accuracy badge & Frequency readout */}
-                        <div className="flex flex-col items-end gap-1">
-                          <div className="flex items-center gap-2">
-                            {isVoiced ? (
-                              <span
-                                className={`px-2.5 py-0.5 rounded-full text-xs font-extrabold border font-mono ${
-                                  Math.abs(currentCents) <= 10
-                                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-xs'
-                                    : Math.abs(currentCents) <= 25
-                                      ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                                      : 'bg-rose-500/20 text-rose-300 border-rose-500/40'
-                                }`}
-                              >
-                                {Math.abs(currentCents) <= 10
-                                  ? '🎯 精準 In-Tune (±10¢)'
-                                  : Math.abs(currentCents) <= 25
-                                    ? `⚠️ 微偏 Slight Drift (${currentCents > 0 ? '+' : ''}${currentCents}¢)`
-                                    : currentCents > 0
-                                      ? `❌ 偏高 Sharp (+${currentCents}¢)`
-                                      : `❌ 偏低 Flat (${currentCents}¢)`}
-                              </span>
-                            ) : (
-                              <span className="text-xs font-mono text-zinc-500">等待唱音輸入...</span>
-                            )}
-                          </div>
-                          <span className="text-xs font-mono text-zinc-400">
-                            {currentPitchHz ? `${currentPitchHz.toFixed(1)} Hz` : '--.- Hz'}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Cents Deviation Gauge & Needle */}
-                      <div className="flex flex-col gap-1">
-                        <div className="flex justify-between text-[10px] font-mono font-bold text-zinc-400 px-1">
-                          <span>-50¢ 偏低</span>
-                          <span className="text-emerald-400 font-black">0¢ (標準音)</span>
-                          <span>+50¢ 偏高</span>
-                        </div>
-                        <div className="relative w-full h-3.5 bg-zinc-900 rounded-full overflow-hidden flex items-center border border-zinc-800">
-                          {/* Target in-tune zone (±10 cents) */}
-                          <div className="absolute left-[40%] right-[40%] top-0 bottom-0 bg-emerald-500/25 border-x border-emerald-500/50" />
-                          <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-emerald-400 z-10" />
-                          {isVoiced && (
-                            <div
-                              className={`absolute top-0 bottom-0 w-2.5 rounded-full shadow-lg transition-all duration-75 ${
-                                Math.abs(currentCents) <= 10
-                                  ? 'bg-emerald-400 shadow-emerald-400/50 ring-1 ring-white'
-                                  : Math.abs(currentCents) <= 25
-                                    ? 'bg-amber-400 shadow-amber-400/50'
-                                    : 'bg-rose-400 shadow-rose-400/50'
-                              }`}
-                              style={{
-                                left: `calc(${50 + (Math.max(-50, Math.min(50, currentCents)) / 50) * 45}% - 5px)`,
-                              }}
-                            />
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Waveform Canvas & Volume Level Meter */}
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 items-center pt-1">
-                        <div className="sm:col-span-2 h-11 bg-zinc-900/90 rounded-xl overflow-hidden border border-zinc-800/80">
-                          <canvas
-                            ref={practiceCanvasRef}
-                            width={500}
-                            height={44}
-                            className="w-full h-full"
-                          />
-                        </div>
-
-                        {/* Input RMS Volume Gauge */}
-                        <div className="flex flex-col gap-1 p-2 bg-zinc-900/80 rounded-xl border border-zinc-800">
-                          <div className="flex items-center justify-between text-[10px] font-mono text-zinc-400">
-                            <span>輸入音量 (RMS)</span>
-                            <span className="font-bold text-zinc-300">
-                              {(currentRms * 100).toFixed(1)}%
-                            </span>
-                          </div>
-                          <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
-                            <div
-                              className={`h-full transition-all duration-75 rounded-full ${
-                                currentRms > 0.3
-                                  ? 'bg-rose-500'
-                                  : currentRms > 0.15
-                                    ? 'bg-amber-400'
-                                    : 'bg-emerald-500'
-                              }`}
-                              style={{ width: `${Math.min(100, (currentRms / 0.25) * 100)}%` }}
-                            />
-                          </div>
-                          <span className="text-[9px] text-zinc-500 truncate">
-                            {currentRms < 0.008
-                              ? '環境靜音'
-                              : currentRms > 0.3
-                                ? '⚠️ 音量過大 (請調降增益)'
-                                : '✅ 收音良好'}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Real-time Pitch Stabilizer Slider in Practice Card */}
-                      <div className="flex flex-col gap-2 p-2.5 bg-zinc-900/90 rounded-xl border border-zinc-800/90">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-1.5 text-xs text-zinc-300 font-bold">
-                            <SlidersHorizontal className="w-3.5 h-3.5 text-amber-400" />
-                            <span>即時防抖強度 (Pitch Stabilizer)</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                                stabilizerStrength <= 0.3
-                                  ? 'bg-blue-500/20 text-blue-300'
-                                  : stabilizerStrength <= 0.65
-                                    ? 'bg-emerald-500/20 text-emerald-300'
-                                    : 'bg-amber-500/20 text-amber-300'
-                              }`}
-                            >
-                              {stabilizerStrength <= 0.3
-                                ? '⚡ 靈敏'
-                                : stabilizerStrength <= 0.65
-                                  ? '🎯 平穩'
-                                  : '🛡️ 極致防抖'}
-                            </span>
-                            <span className="text-xs font-mono font-black text-amber-400">
-                              {Math.round(stabilizerStrength * 100)}%
-                            </span>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2.5">
-                          <span className="text-[9px] text-zinc-500">0%</span>
-                          <input
-                            id="deck-practice-stabilizer-slider"
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.05"
-                            value={stabilizerStrength}
-                            onChange={e => handleStabilizerChange(parseFloat(e.target.value))}
-                            className="accent-amber-500 flex-1 h-1.5 bg-zinc-800 rounded-lg cursor-pointer"
-                          />
-                          <span className="text-[9px] text-zinc-500">100%</span>
-                          <div className="flex items-center gap-1 shrink-0">
-                            <button
-                              type="button"
-                              onClick={() => handleStabilizerChange(0.25)}
-                              className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer ${
-                                Math.abs(stabilizerStrength - 0.25) < 0.04
-                                  ? 'bg-amber-400 text-zinc-950 font-black'
-                                  : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
-                              }`}
-                            >
-                              25%
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleStabilizerChange(0.50)}
-                              className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer ${
-                                Math.abs(stabilizerStrength - 0.50) < 0.04
-                                  ? 'bg-amber-400 text-zinc-950 font-black'
-                                  : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
-                              }`}
-                            >
-                              50%
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleStabilizerChange(0.80)}
-                              className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer ${
-                                Math.abs(stabilizerStrength - 0.80) < 0.04
-                                  ? 'bg-amber-400 text-zinc-950 font-black'
-                                  : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
-                              }`}
-                            >
-                              80%
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Practice Instruction Hint */}
-                      <div className="flex items-center gap-1.5 text-[11px] text-emerald-300/90 bg-emerald-950/40 p-2 rounded-lg border border-emerald-800/40">
-                        <Sparkles className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                        <span>
-                          <strong>音準對齊練習：</strong>點擊下方鋼琴琴鍵試聽標準音，對著麥克風唱出相同音高，讓指針居中、琴鍵亮起綠色「唱音」！
-                        </span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-4 p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-900/40 border border-zinc-200 dark:border-zinc-800/60">
-                <div className="flex items-center justify-between flex-wrap gap-2 text-xs">
-                  <span className="font-black text-zinc-700 dark:text-zinc-300 flex items-center gap-1.5">
-                    <Keyboard className="w-4 h-4 text-amber-500" />
-                    <span>電腦打字鍵位與 Web MIDI 設備</span>
-                  </span>
-                  <div className="flex items-center gap-2 font-mono">
-                    <span className="text-zinc-400">MIDI 狀態:</span>
-                    <span
-                      className={`px-2 py-0.5 rounded-full font-bold text-[10px] ${
-                        isMidiConnected
-                          ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                          : 'bg-zinc-800 text-zinc-400'
-                      }`}
-                    >
-                      {isMidiConnected
-                        ? `已連線 (${midiDevices.find(d => d.id === activeMidiDevice)?.name || '外部鍵盤'})`
-                        : isMidiSupported
-                          ? '未偵測到 MIDI 設備 (可用打字/觸控)'
-                          : '瀏覽器不支援 MIDI'}
+                </>
+              ) : step === 'COUNTING_IN' ? (
+                <>
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-3 h-3 rounded-full bg-amber-500 animate-ping" />
+                    <span className="text-xs font-black text-amber-700 dark:text-amber-300 uppercase tracking-wider">
+                      {activeMode === 'hum'
+                        ? `哼唱預備 · 倒數 ${countdownBeat} 拍`
+                        : `琴鍵預備 · 倒數 ${countdownBeat} 拍`}
                     </span>
                   </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {/* QWERTY Mapping Selector */}
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-mono font-bold text-zinc-400 uppercase">
-                      電腦鍵盤打字映射
-                    </label>
-                    <select
-                      id="deck-qwerty-mode-select"
-                      value={qwertyMappingMode}
-                      onChange={e => setQwertyMappingMode(e.target.value as QwertyMappingMode)}
-                      className="px-2.5 py-1.5 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-xl text-xs font-bold text-zinc-900 dark:text-zinc-100 cursor-pointer"
-                    >
-                      <option value="chromatic_piano">
-                        固定鋼琴白黑鍵 (A~K 為 C4~C5，W/E/T/Y/U 為升音)
-                      </option>
-                      <option value="diatonic_degrees">
-                        首調唱名 (A~J 固定為 1~7 音，自動隨調號移調)
-                      </option>
-                    </select>
-                  </div>
-
-                  {/* Triplets Toggle */}
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-mono font-bold text-zinc-400 uppercase">
-                      三連音辨識 (Triplets)
-                    </label>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs font-mono text-amber-600 dark:text-amber-400 font-bold hidden sm:inline">
+                      {countdownBeatsCount} 拍預備 · 速度 {activeBpm} BPM
+                    </span>
                     <button
                       type="button"
-                      onClick={() => setAllowTriplets(!allowTriplets)}
-                      className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer text-center ${
-                        allowTriplets
-                          ? 'bg-amber-500/20 text-amber-600 dark:text-amber-300 border-amber-500/40'
-                          : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-500 border-zinc-300 dark:border-zinc-700'
-                      }`}
+                      onClick={() => {
+                        stopAllPipelines();
+                        setStep('SETUP');
+                      }}
+                      className="px-3 py-1 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-bold text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
                     >
-                      {allowTriplets ? '開 (允許三連音 3 連音量化)' : '關 (純二進位節奏)'}
+                      取消預備
                     </button>
                   </div>
-                </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-3 h-3 rounded-full bg-rose-500 animate-ping" />
+                    <span className="text-xs font-black text-rose-700 dark:text-rose-300 uppercase tracking-wider">
+                      {activeMode === 'hum' ? `錄音辨識中 · ${activePreset.nameZh}` : '琴鍵彈奏收集中'}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 font-mono font-bold text-sm text-rose-700 dark:text-rose-300">
+                    <Clock className="w-4 h-4" />
+                    <span>{recordingSeconds.toFixed(1)}s</span>
+                  </div>
+                </>
+              )}
+            </div>
 
-                {/* One-Finger Gap Filtering & Threshold Slider */}
-                <div className="flex flex-col gap-2.5 p-3 rounded-xl bg-zinc-100 dark:bg-zinc-800/70 border border-zinc-200 dark:border-zinc-700/80">
-                  <div className="flex items-center justify-between flex-wrap gap-2">
-                    <div className="flex flex-col">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-xs font-black text-zinc-800 dark:text-zinc-200">
-                          單指彈奏空隙過濾 (One-Finger Gap Filter)
-                        </span>
-                        <span
-                          className={`text-[10px] font-bold px-1.5 py-0.2 rounded font-mono ${
-                            filterOneFingerGaps
-                              ? 'bg-amber-500/20 text-amber-600 dark:text-amber-300'
-                              : 'bg-zinc-200 dark:bg-zinc-700 text-zinc-500'
+            {/* ── COLLAPSIBLE ADVANCED SETTINGS ACCORDION (SETUP MODE ONLY) ──────── */}
+            {step === 'SETUP' && showAdvancedSettings && (
+              <div className="animate-in fade-in duration-150 flex flex-col gap-4 p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-800">
+                {/* Mode Settings Content */}
+                {activeMode === 'hum' ? (
+                  <div className="flex flex-col gap-3.5">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <span className="text-xs font-black text-zinc-700 dark:text-zinc-300 flex items-center gap-1.5">
+                        <Mic className="w-4 h-4 text-amber-500" />
+                        <span>音源預設與增益</span>
+                      </span>
+                      <div className="flex items-center gap-2 text-xs font-mono text-zinc-400">
+                        <Headphones className="w-3.5 h-3.5 text-amber-400" />
+                        <span>建議佩戴耳機以避免聲音反饋</span>
+                      </div>
+                    </div>
+
+                    {/* Presets Grid */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {INSTRUMENT_PRESETS.map(p => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => setPresetId(p.id)}
+                          className={`flex flex-col p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                            presetId === p.id
+                              ? 'bg-amber-500/15 border-amber-500 text-amber-800 dark:text-amber-300 shadow-xs ring-1 ring-amber-400/40'
+                              : 'bg-white dark:bg-zinc-900/60 border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400 hover:border-zinc-300'
                           }`}
                         >
-                          {filterOneFingerGaps ? '已開啟 (預設自動填補換音空隙)' : '已關閉 (保留原始彈奏空隙)'}
+                          <div className="flex items-center gap-1.5 text-xs font-black">
+                            <span>{p.icon}</span>
+                            <span>{p.nameZh}</span>
+                          </div>
+                          <span className="text-[10px] text-zinc-500 mt-0.5 line-clamp-1">{p.tips}</span>
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Gain & Stabilizer */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                      <div className="flex items-center gap-2.5">
+                        <span className="text-xs font-bold text-zinc-500 shrink-0">麥克風放大:</span>
+                        <input
+                          id="deck-hum-gain-slider"
+                          type="range"
+                          min="1"
+                          max="20"
+                          step="0.5"
+                          value={micGain}
+                          onChange={e => handleMicGainChange(parseFloat(e.target.value))}
+                          className="accent-amber-500 flex-1 h-2 bg-zinc-300 dark:bg-zinc-700 rounded-lg cursor-pointer"
+                        />
+                        <span className="text-xs font-mono font-bold text-amber-500 w-12 text-right">
+                          {micGain.toFixed(1)}x
                         </span>
                       </div>
-                      <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                        自動吸收單指換鍵時的抬指空白，延伸前音避免產生零碎的八分休止符 (0)
+
+                      <div className="flex items-center gap-2.5">
+                        <span className="text-xs font-bold text-zinc-500 shrink-0">音準防抖:</span>
+                        <input
+                          id="deck-hum-stabilizer-slider"
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.05"
+                          value={stabilizerStrength}
+                          onChange={e => handleStabilizerChange(parseFloat(e.target.value))}
+                          className="accent-amber-500 flex-1 h-2 bg-zinc-300 dark:bg-zinc-700 rounded-lg cursor-pointer"
+                        />
+                        <span className="text-xs font-mono font-bold text-amber-500 w-12 text-right">
+                          {Math.round(stabilizerStrength * 100)}%
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-3.5">
+                    <div className="flex items-center justify-between flex-wrap gap-2 text-xs">
+                      <span className="font-black text-zinc-700 dark:text-zinc-300 flex items-center gap-1.5">
+                        <Keyboard className="w-4 h-4 text-amber-500" />
+                        <span>鍵盤按鍵映射與空隙過濾</span>
+                      </span>
+                      <span
+                        className={`px-2 py-0.5 rounded-full font-bold text-[10px] ${
+                          isMidiConnected
+                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                            : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-500'
+                        }`}
+                      >
+                        {isMidiConnected ? 'MIDI 已連線' : '無外部 MIDI (使用電腦打字)'}
                       </span>
                     </div>
 
-                    <button
-                      id="deck-one-finger-gap-toggle"
-                      type="button"
-                      onClick={() => setFilterOneFingerGaps(!filterOneFingerGaps)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
-                        filterOneFingerGaps
-                          ? 'bg-amber-500 hover:bg-amber-400 text-zinc-950 border-amber-500 shadow-xs'
-                          : 'bg-zinc-200 dark:bg-zinc-700 hover:bg-zinc-300 dark:hover:bg-zinc-600 text-zinc-700 dark:text-zinc-300 border-zinc-300 dark:border-zinc-600'
-                      }`}
-                    >
-                      {filterOneFingerGaps ? '開啟 (過濾空隙)' : '關閉 (不作過濾)'}
-                    </button>
-                  </div>
-
-                  {filterOneFingerGaps && (
-                    <div className="flex flex-col gap-1.5 pt-1.5 border-t border-zinc-200 dark:border-zinc-700/60 animate-in fade-in duration-150">
-                      <div className="flex items-center justify-between text-xs font-mono">
-                        <span className="font-bold text-zinc-600 dark:text-zinc-400">
-                          過濾門檻 (Gap Threshold):
-                        </span>
-                        <span className="font-black text-amber-600 dark:text-amber-400">
-                          {oneFingerGapThresholdMs} ms
-                          <span className="text-[11px] font-normal text-zinc-500 ml-1">
-                            (約 {(oneFingerGapThresholdMs / (60000 / activeBpm)).toFixed(2)} 拍)
-                          </span>
-                        </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[10px] font-mono font-bold text-zinc-400 uppercase">
+                          打字鍵位映射
+                        </label>
+                        <select
+                          id="deck-qwerty-mode-select"
+                          value={qwertyMappingMode}
+                          onChange={e => setQwertyMappingMode(e.target.value as QwertyMappingMode)}
+                          className="px-2.5 py-1.5 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-xl text-xs font-bold text-zinc-900 dark:text-zinc-100 cursor-pointer"
+                        >
+                          <option value="chromatic_piano">固定白黑鍵 (A~K 為 C4~C5)</option>
+                          <option value="diatonic_degrees">首調唱名 (A~J 為 1~7 音)</option>
+                        </select>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <span className="text-[10px] font-mono text-zinc-400">150ms (快)</span>
-                        <input
-                          id="deck-one-finger-gap-slider"
-                          type="range"
-                          min={150}
-                          max={900}
-                          step={25}
-                          value={oneFingerGapThresholdMs}
-                          onChange={e => setOneFingerGapThresholdMs(Number(e.target.value))}
-                          className="flex-1 accent-amber-500 h-1.5 bg-zinc-300 dark:bg-zinc-700 rounded-lg cursor-pointer"
-                        />
-                        <span className="text-[10px] font-mono text-zinc-400">900ms (慢)</span>
+
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[10px] font-mono font-bold text-zinc-400 uppercase">
+                          單指換鍵空隙過濾
+                        </label>
+                        <button
+                          id="deck-one-finger-gap-toggle"
+                          type="button"
+                          onClick={() => setFilterOneFingerGaps(!filterOneFingerGaps)}
+                          className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer text-center ${
+                            filterOneFingerGaps
+                              ? 'bg-amber-500/20 text-amber-600 dark:text-amber-300 border-amber-500/40'
+                              : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-500 border-zinc-300 dark:border-zinc-700'
+                          }`}
+                        >
+                          {filterOneFingerGaps ? '開啟 (自動填補換音八分休止符)' : '關閉 (保留原始彈奏空隙)'}
+                        </button>
                       </div>
                     </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* PERSISTENT PIANO BED IN SETUP */}
-            <div className="flex flex-col gap-2">
-              <PianoBed
-                activeKey={activeKey}
-                accidentalPreference={accidentalPref}
-                octaveBedView={octaveBedView}
-                onOctaveBedViewChange={setOctaveBedView}
-                activeMidiSet={activeMidiSet}
-                detectedPitchMidi={activeMode === 'hum' && isVoiced ? currentMidi : null}
-                onNoteDown={handlePianoNoteDown}
-                onNoteUp={handlePianoNoteUp}
-                mode={activeMode === 'hum' ? 'align' : 'record'}
-                octaveShiftVal={octaveShiftVal}
-              />
-            </div>
-
-            {/* START RECORDING BUTTON */}
-            <div className="flex items-center justify-end gap-3 pt-2">
-              {onClose && (
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="px-4 py-2.5 rounded-xl border border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 text-xs font-bold hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
-                >
-                  關閉
-                </button>
-              )}
-              <button
-                id="deck-start-recording-btn"
-                type="button"
-                onClick={startRecordingFlow}
-                className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-zinc-950 font-black text-sm shadow-md transition-all active:scale-95 cursor-pointer"
-              >
-                {activeMode === 'hum' ? (
-                  <>
-                    <Mic2 className="w-4 h-4" />
-                    <span>開始哼唱收音 (Start Hum Recording)</span>
-                  </>
-                ) : (
-                  <>
-                    <Keyboard className="w-4 h-4" />
-                    <span>開始鍵盤彈奏 (Start Keyboard Recording)</span>
-                  </>
+                  </div>
                 )}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* ======================================================================= */}
-        {/* STEP 2 & 3: COUNTING_IN + RECORDING (unified — zero keyboard jump)      */}
-        {/* ======================================================================= */}
-        {(step === 'COUNTING_IN' || step === 'RECORDING') && (
-          <div className="flex flex-col gap-5 animate-in fade-in duration-200">
-
-            {/* ── Status Header ─────────────────────────────────────────────── */}
-            {step === 'COUNTING_IN' ? (
-              <div className="flex items-center justify-between px-4 py-2.5 bg-amber-500/15 border border-amber-500/30 rounded-2xl flex-wrap gap-2 min-h-[42px]">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-amber-500 animate-ping" />
-                  <span className="text-xs font-black text-amber-700 dark:text-amber-300 uppercase tracking-wider">
-                    {activeMode === 'hum'
-                      ? `哼唱預備 · 倒數 ${countdownBeat} 拍`
-                      : `琴鍵預備 · 倒數 ${countdownBeat} 拍`}
-                  </span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-xs font-mono text-amber-600 dark:text-amber-400 font-bold hidden sm:inline">
-                    {countdownBeatsCount} 拍預備拍 · 速度 {activeBpm} BPM
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      stopAllPipelines();
-                      setStep('SETUP');
-                    }}
-                    className="px-3 py-1 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-bold text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
-                  >
-                    取消預備
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="flex items-center justify-between px-4 py-2.5 bg-rose-500/15 border border-rose-500/30 rounded-2xl flex-wrap gap-2 min-h-[42px]">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-rose-500 animate-ping" />
-                  <span className="text-xs font-black text-rose-700 dark:text-rose-300 uppercase tracking-wider">
-                    {activeMode === 'hum' ? `錄音辨識中 · ${activePreset.nameZh}` : '琴鍵彈奏收集中'}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 font-mono font-bold text-sm text-rose-700 dark:text-rose-300">
-                  <Clock className="w-4 h-4" />
-                  <span>{recordingSeconds.toFixed(1)}s</span>
-                </div>
               </div>
             )}
 
-            {/* ── VISUAL METRONOME CLICK BAR (Red Frame — identical in both steps) ── */}
+            {/* ── SLOT 2: METRONOME & COUNT-IN BAR (Fixed 64px, h-16) ──────────── */}
             <div
               id="deck-visual-metronome-bar"
               className={`h-16 px-4 rounded-2xl border transition-colors duration-100 flex items-center justify-between gap-3 overflow-hidden select-none box-border ${
-                isDownbeatFlash
-                  ? 'bg-amber-500/20 border-amber-400 shadow-md'
-                  : isBeatPulse
-                    ? 'bg-zinc-800/95 border-amber-500/40 shadow-xs'
-                    : 'bg-zinc-900/90 border-zinc-800'
+                step === 'SETUP'
+                  ? 'bg-zinc-50 dark:bg-zinc-900/60 border-zinc-200 dark:border-zinc-800'
+                  : isDownbeatFlash
+                    ? 'bg-amber-500/20 border-amber-400 shadow-md'
+                    : isBeatPulse
+                      ? 'bg-zinc-800/95 border-amber-500/40 shadow-xs'
+                      : 'bg-zinc-900/90 border-zinc-800'
               }`}
             >
               {/* Left: Beat Badge + Label */}
               <div className="flex items-center gap-3 shrink-0 w-44 sm:w-48">
                 <div
                   className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-lg transition-all duration-100 shrink-0 ${
-                    isDownbeatFlash
-                      ? 'bg-amber-400 text-zinc-950 scale-105 shadow-md shadow-amber-400/40 ring-1 ring-amber-300'
-                      : isBeatPulse
-                        ? 'bg-amber-500 text-zinc-950 scale-102 shadow-xs'
-                        : 'bg-zinc-800 text-zinc-300 border border-zinc-700'
+                    step === 'SETUP'
+                      ? 'bg-zinc-200 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border border-zinc-300 dark:border-zinc-700'
+                      : isDownbeatFlash
+                        ? 'bg-amber-400 text-zinc-950 scale-105 shadow-md shadow-amber-400/40 ring-1 ring-amber-300'
+                        : isBeatPulse
+                          ? 'bg-amber-500 text-zinc-950 scale-102 shadow-xs'
+                          : 'bg-zinc-800 text-zinc-300 border border-zinc-700'
                   }`}
                 >
-                  {step === 'COUNTING_IN' ? countdownBeat : currentBeatInBar}
+                  {step === 'COUNTING_IN'
+                    ? countdownBeat
+                    : step === 'RECORDING'
+                      ? currentBeatInBar
+                      : '♩'}
                 </div>
                 <div className="flex flex-col min-w-0">
-                  <span className="text-xs font-bold text-zinc-200 flex items-center gap-1.5 truncate">
-                    <Activity className="w-3.5 h-3.5 text-amber-400" />
-                    <span>{step === 'COUNTING_IN' ? '預備倒數' : '節拍器'}</span>
+                  <span className="text-xs font-bold text-zinc-800 dark:text-zinc-200 flex items-center gap-1.5 truncate">
+                    <Activity className="w-3.5 h-3.5 text-amber-500" />
+                    <span>
+                      {step === 'COUNTING_IN'
+                        ? '預備倒數'
+                        : step === 'RECORDING'
+                          ? '節拍器'
+                          : '預備拍 / 節拍'}
+                    </span>
                   </span>
-                  <span className="text-[10px] font-mono text-zinc-400">
+                  <span className="text-[10px] font-mono text-zinc-500 dark:text-zinc-400">
                     {step === 'COUNTING_IN'
                       ? `${activeBpm} BPM · 倒數 ${countdownBeat} 拍`
-                      : `${activeBpm} BPM · ${activeTimeSignature} 拍`}
+                      : step === 'RECORDING'
+                        ? `${activeBpm} BPM · ${activeTimeSignature} 拍`
+                        : `${enableCountIn ? `${countdownBeatsCount} 拍預備` : '直接開始'} · ${activeBpm} BPM`}
                   </span>
                 </div>
               </div>
 
               {/* Center: Beat Pods */}
               <div className="flex items-center justify-center gap-2 flex-1">
-                {step === 'COUNTING_IN'
-                  ? Array.from({ length: countdownBeatsCount }).map((_, idx) => {
+                {step === 'COUNTING_IN' ? (
+                  Array.from({ length: countdownBeatsCount }).map((_, idx) => {
+                    const beatNum = idx + 1;
+                    const isCurrent = countdownBeat === beatNum;
+                    const isDown = beatNum === 1;
+                    return (
+                      <div
+                        key={beatNum}
+                        className={`flex items-center justify-center w-10 sm:w-12 h-9 rounded-xl text-xs font-mono font-bold transition-all duration-100 select-none ${
+                          isCurrent
+                            ? isDown
+                              ? 'bg-amber-400 text-zinc-950 font-black ring-1 ring-amber-300 shadow-sm scale-105'
+                              : 'bg-amber-500 text-zinc-950 font-black scale-105'
+                            : isDown
+                              ? 'bg-zinc-800/90 border border-amber-500/40 text-amber-400'
+                              : 'bg-zinc-800/60 text-zinc-400 border border-zinc-700/60'
+                        }`}
+                      >
+                        <span className="text-[9px] mr-0.5">{isDown ? '★' : '•'}</span>
+                        <span>{beatNum}</span>
+                      </div>
+                    );
+                  })
+                ) : step === 'RECORDING' ? (
+                  Array.from({ length: parseInt(activeTimeSignature.split('/')[0], 10) || 4 }).map(
+                    (_, idx) => {
                       const beatNum = idx + 1;
-                      const isCurrent = countdownBeat === beatNum;
+                      const isCurrent = currentBeatInBar === beatNum;
                       const isDown = beatNum === 1;
                       return (
                         <div
@@ -2584,31 +2115,45 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
                           <span>{beatNum}</span>
                         </div>
                       );
-                    })
-                  : Array.from({ length: parseInt(activeTimeSignature.split('/')[0], 10) || 4 }).map(
-                      (_, idx) => {
-                        const beatNum = idx + 1;
-                        const isCurrent = currentBeatInBar === beatNum;
-                        const isDown = beatNum === 1;
-                        return (
-                          <div
-                            key={beatNum}
-                            className={`flex items-center justify-center w-10 sm:w-12 h-9 rounded-xl text-xs font-mono font-bold transition-all duration-100 select-none ${
-                              isCurrent
-                                ? isDown
-                                  ? 'bg-amber-400 text-zinc-950 font-black ring-1 ring-amber-300 shadow-sm scale-105'
-                                  : 'bg-amber-500 text-zinc-950 font-black scale-105'
-                                : isDown
-                                  ? 'bg-zinc-800/90 border border-amber-500/40 text-amber-400'
-                                  : 'bg-zinc-800/60 text-zinc-400 border border-zinc-700/60'
-                            }`}
-                          >
-                            <span className="text-[9px] mr-0.5">{isDown ? '★' : '•'}</span>
-                            <span>{beatNum}</span>
-                          </div>
-                        );
-                      }
-                    )}
+                    }
+                  )
+                ) : (
+                  /* SETUP MODE: Interactive Count-in Selector Pods */
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] font-bold text-zinc-500 hidden md:inline mr-1">
+                      預備拍數:
+                    </span>
+                    {([2, 3, 4] as const).map(b => (
+                      <button
+                        key={b}
+                        type="button"
+                        id={`deck-count-in-${b}-beats`}
+                        onClick={() => {
+                          setEnableCountIn(true);
+                          setCountdownBeatsCount(b);
+                        }}
+                        className={`px-3 py-1.5 text-xs font-bold font-mono rounded-xl transition-all cursor-pointer ${
+                          enableCountIn && countdownBeatsCount === b
+                            ? 'bg-amber-500 text-zinc-950 font-black shadow-xs ring-1 ring-amber-400'
+                            : 'bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-700 hover:text-zinc-900 dark:hover:text-zinc-200'
+                        }`}
+                      >
+                        {b} 拍
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setEnableCountIn(!enableCountIn)}
+                      className={`px-2.5 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer ${
+                        !enableCountIn
+                          ? 'bg-zinc-300 dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 font-bold'
+                          : 'text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300'
+                      }`}
+                    >
+                      {!enableCountIn ? '不倒數' : '關閉倒數'}
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Right: Audible Click Toggle */}
@@ -2617,13 +2162,14 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
                 onClick={() => setAudibleClickDuringRecording(!audibleClickDuringRecording)}
                 className={`flex items-center justify-center gap-1.5 h-9 px-3 text-xs font-bold rounded-xl border transition-all cursor-pointer select-none shrink-0 ${
                   audibleClickDuringRecording
-                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
-                    : 'bg-zinc-800 text-zinc-400 border-zinc-700 hover:text-zinc-200'
+                    ? 'bg-amber-500/20 text-amber-700 dark:text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
+                    : 'bg-white dark:bg-zinc-800 text-zinc-500 border-zinc-200 dark:border-zinc-700 hover:text-zinc-900 dark:hover:text-zinc-200'
                 }`}
+                title={audibleClickDuringRecording ? '點擊關閉聲音' : '點擊開啟節拍聲音'}
               >
                 {audibleClickDuringRecording ? (
                   <>
-                    <Volume2 className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    <Volume2 className="w-3.5 h-3.5 text-amber-500 shrink-0" />
                     <span className="hidden sm:inline">提示音：開</span>
                   </>
                 ) : (
@@ -2635,125 +2181,174 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
               </button>
             </div>
 
-            {/* ── HUM-SPECIFIC: PITCH TUNER GAUGE (shown in both steps for hum) ─ */}
-            {activeMode === 'hum' && (
-              <div className="p-4 bg-zinc-900 border border-zinc-800 rounded-2xl flex flex-col gap-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-4xl font-black text-amber-400 font-mono">
-                      {activeSolfegInfo.noteNum}
-                    </span>
-                    <span className="text-base font-bold text-zinc-400">
-                      {activeSolfegInfo.solfege}
-                    </span>
-                    {activeSolfegInfo.octaveDots !== 0 && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold">
-                        {activeSolfegInfo.octaveDots > 0
-                          ? `+${activeSolfegInfo.octaveDots} 八度`
-                          : `${activeSolfegInfo.octaveDots} 八度`}
+            {/* ── SLOT 3: MODE MONITOR & PRACTICE SLOT (Fixed 148px) ───────────── */}
+            <div className="h-[148px] max-h-[148px] rounded-2xl overflow-hidden box-border">
+              {activeMode === 'hum' ? (
+                /* HUM MONITOR (Identical in SETUP, COUNTING_IN, RECORDING) */
+                <div className="h-full p-3.5 bg-zinc-900 border border-zinc-800 rounded-2xl flex flex-col justify-between box-border">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-baseline gap-2.5">
+                      <span className="text-3xl sm:text-4xl font-black text-amber-400 font-mono tracking-tight">
+                        {isVoiced ? activeSolfegInfo.noteNum : '-'}
                       </span>
-                    )}
-                  </div>
-                  <div className="flex flex-col items-end text-xs font-mono">
-                    <span className="text-zinc-400">
-                      {currentPitchHz ? `${currentPitchHz.toFixed(1)} Hz` : '等待唱音...'}
-                    </span>
-                    <span
-                      className={`font-bold ${
-                        Math.abs(currentCents) <= 15
-                          ? 'text-emerald-400'
-                          : Math.abs(currentCents) <= 30
-                            ? 'text-amber-400'
-                            : 'text-rose-400'
-                      }`}
-                    >
-                      {currentPitchHz ? `${currentCents > 0 ? '+' : ''}${currentCents} ¢` : ''}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Needle Bar */}
-                <div className="relative w-full h-3 bg-zinc-800 rounded-full overflow-hidden flex items-center">
-                  <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-zinc-400 z-10" />
-                  <div className="absolute left-[35%] right-[35%] top-0 bottom-0 bg-emerald-500/20" />
-                  {isVoiced && (
-                    <div
-                      className="absolute top-0 bottom-0 w-2 rounded-full bg-amber-400 shadow-md transition-all duration-75"
-                      style={{
-                        left: `calc(${50 + (Math.max(-50, Math.min(50, currentCents)) / 50) * 45}% - 4px)`,
-                      }}
-                    />
-                  )}
-                </div>
-
-                {/* Oscilloscope Canvas */}
-                <div className="w-full h-10 bg-zinc-950 rounded-xl overflow-hidden">
-                  <canvas ref={canvasRef} width={600} height={40} className="w-full h-full" />
-                </div>
-              </div>
-            )}
-
-            {/* ── KEYBOARD-SPECIFIC: DURATION BADGE & LIVE NOTES STREAM ─────── */}
-            {activeMode === 'keyboard' && (
-              <div className="flex flex-col gap-3">
-                <div className="flex items-center justify-between px-4 py-2.5 bg-zinc-900 rounded-2xl border border-zinc-800 min-h-[44px]">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-zinc-400">目前按壓時值：</span>
-                    {step === 'COUNTING_IN' ? (
-                      <span className="text-xs text-zinc-500 font-mono">
-                        倒數結束後開始彈奏...
+                      <span className="text-sm font-bold text-zinc-300">
+                        {isVoiced ? activeSolfegInfo.solfege : '等待唱音輸入 (如 da / la)...'}
                       </span>
-                    ) : activeHeldBeats !== null ? (
-                      <span className="px-2 py-0.5 rounded-lg bg-amber-500 text-zinc-950 font-black font-mono text-xs animate-pulse">
-                        {activeHeldBeats.toFixed(2)} 拍
+                      {isVoiced && activeSolfegInfo.octaveDots !== 0 && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold">
+                          {activeSolfegInfo.octaveDots > 0
+                            ? `+${activeSolfegInfo.octaveDots} 八度`
+                            : `${activeSolfegInfo.octaveDots} 八度`}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3 text-xs font-mono">
+                      <span className="text-zinc-400">
+                        {currentPitchHz ? `${currentPitchHz.toFixed(1)} Hz` : '--.- Hz'}
                       </span>
-                    ) : (
-                      <span className="text-xs text-zinc-500 font-mono">放開琴鍵即可結算音符</span>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    disabled={step === 'COUNTING_IN'}
-                    onClick={() => keyEngineRef.current?.undoLastNote()}
-                    className={`px-2.5 py-1 text-xs font-bold rounded-lg border transition-colors ${
-                      step === 'COUNTING_IN'
-                        ? 'bg-zinc-800/50 text-zinc-600 border-zinc-700/50 cursor-not-allowed'
-                        : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-zinc-700 cursor-pointer'
-                    }`}
-                    title="撤銷上一個音符 (Backspace)"
-                  >
-                    撤銷上音 (Undo)
-                  </button>
-                </div>
-
-                {/* Live stream — only shows during recording */}
-                {step === 'RECORDING' && liveRecordedNotes.length > 0 && (
-                  <div className="flex items-center gap-2 p-2 bg-zinc-950/70 rounded-xl border border-zinc-800/80 overflow-x-auto">
-                    <span className="text-[10px] font-bold text-zinc-400 font-mono shrink-0">
-                      已錄入：
-                    </span>
-                    <div className="flex items-center gap-1.5 flex-nowrap">
-                      {liveRecordedNotes.map(n => (
-                        <div
-                          key={n.id}
-                          className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-zinc-900 border border-zinc-700 text-zinc-200 text-xs font-mono font-bold shrink-0"
+                      <span
+                        className={`font-bold px-2 py-0.5 rounded-md ${
+                          Math.abs(currentCents) <= 15
+                            ? 'bg-emerald-500/20 text-emerald-400'
+                            : Math.abs(currentCents) <= 30
+                              ? 'bg-amber-500/20 text-amber-400'
+                              : 'bg-rose-500/20 text-rose-400'
+                        }`}
+                      >
+                        {currentPitchHz ? `${currentCents > 0 ? '+' : ''}${currentCents} ¢` : '0 ¢'}
+                      </span>
+                      {step === 'SETUP' && (
+                        <button
+                          type="button"
+                          id="deck-toggle-practice-btn"
+                          onClick={() => {
+                            if (isPracticingPitch) {
+                              stopPitchPractice();
+                            } else {
+                              void startPitchPractice();
+                            }
+                          }}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                            isPracticingPitch
+                              ? 'bg-rose-500 text-white'
+                              : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                          }`}
                         >
-                          <span className="text-amber-400 font-black">
-                            {n.accidental}{n.pitch}{n.octave > 0 ? '̇' : n.octave < 0 ? '̣' : ''}
-                          </span>
-                          <span className="text-[10px] px-1 rounded bg-zinc-800 text-zinc-400">
-                            {n.duration}拍
-                          </span>
-                        </div>
-                      ))}
+                          {isPracticingPitch ? '停止暖身' : '暖身試唱'}
+                        </button>
+                      )}
                     </div>
                   </div>
-                )}
-              </div>
-            )}
 
-            {/* ── PERSISTENT PIANO BED (never unmounted — zero jump) ──────────── */}
-            <div className="flex flex-col gap-2">
+                  {/* Needle Bar */}
+                  <div className="relative w-full h-3 bg-zinc-800 rounded-full overflow-hidden flex items-center">
+                    <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-zinc-400 z-10" />
+                    <div className="absolute left-[35%] right-[35%] top-0 bottom-0 bg-emerald-500/20" />
+                    {isVoiced && (
+                      <div
+                        className="absolute top-0 bottom-0 w-2.5 rounded-full bg-amber-400 shadow-md transition-all duration-75"
+                        style={{
+                          left: `calc(${50 + (Math.max(-50, Math.min(50, currentCents)) / 50) * 45}% - 5px)`,
+                        }}
+                      />
+                    )}
+                  </div>
+
+                  {/* Oscilloscope Canvas */}
+                  <div className="w-full h-9 bg-zinc-950 rounded-xl overflow-hidden">
+                    <canvas
+                      ref={step === 'SETUP' ? practiceCanvasRef : canvasRef}
+                      width={600}
+                      height={36}
+                      className="w-full h-full"
+                    />
+                  </div>
+                </div>
+              ) : (
+                /* KEYBOARD MONITOR (Identical in SETUP, COUNTING_IN, RECORDING) */
+                <div className="h-full p-3.5 bg-zinc-900 border border-zinc-800 rounded-2xl flex flex-col justify-between box-border">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-zinc-400">目前彈奏時值：</span>
+                      {activeHeldBeats !== null ? (
+                        <span className="px-2.5 py-0.5 rounded-lg bg-amber-500 text-zinc-950 font-black font-mono text-sm animate-pulse">
+                          {activeHeldBeats.toFixed(2)} 拍
+                        </span>
+                      ) : (
+                        <span className="text-xs text-zinc-400 font-mono">
+                          {step === 'SETUP'
+                            ? '點擊下方琴鍵或鍵盤試彈試聽'
+                            : step === 'COUNTING_IN'
+                              ? '倒數結束後開始彈奏...'
+                              : '放開琴鍵即可結算音符'}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono text-zinc-400">
+                        {qwertyMappingMode === 'chromatic_piano'
+                          ? '鍵位：A~K (白鍵) / W,E,T,Y,U (黑鍵)'
+                          : '鍵位：A~J (簡譜 1~7 音)'}
+                      </span>
+                      {liveRecordedNotes.length > 0 && (
+                        <button
+                          type="button"
+                          disabled={step === 'COUNTING_IN'}
+                          onClick={() => keyEngineRef.current?.undoLastNote()}
+                          className="px-2.5 py-1 text-xs font-bold rounded-lg border bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-zinc-700 cursor-pointer"
+                          title="撤銷上一個音符 (Backspace)"
+                        >
+                          撤銷上音
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Notes Live Stream Strip or Guide */}
+                  <div className="h-14 bg-zinc-950/80 rounded-xl border border-zinc-800 p-2 flex items-center overflow-x-auto gap-1.5">
+                    {liveRecordedNotes.length > 0 ? (
+                      <>
+                        <span className="text-[10px] font-bold text-zinc-400 font-mono shrink-0">
+                          已錄入：
+                        </span>
+                        <div className="flex items-center gap-1.5 flex-nowrap">
+                          {liveRecordedNotes.map(n => (
+                            <div
+                              key={n.id}
+                              className="flex items-center gap-1 px-2 py-1 rounded-lg bg-zinc-900 border border-zinc-700 text-zinc-200 text-xs font-mono font-bold shrink-0"
+                            >
+                              <span className="text-amber-400 font-black">
+                                {n.accidental}{n.pitch}{n.octave > 0 ? '̇' : n.octave < 0 ? '̣' : ''}
+                              </span>
+                              <span className="text-[10px] px-1 rounded bg-zinc-800 text-zinc-400">
+                                {n.duration}拍
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="flex items-center justify-between w-full px-2 text-xs text-zinc-500">
+                        <span>
+                          {step === 'SETUP'
+                            ? '💡 提示：在錄音前可試彈琴鍵，音符將自動對齊所選主音調號與量化精度。'
+                            : step === 'COUNTING_IN'
+                              ? '⏳ 倒數中，請依節拍器預備彈奏第一音...'
+                              : '🎹 彈奏中，音符將隨彈奏即時顯示在此流水線中。'}
+                        </span>
+                        <span className="font-mono text-[10px] text-zinc-600 shrink-0">
+                          1 = {activeKey} · {activeTimeSignature}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* ── SLOT 4: PERSISTENT PIANO BED (NEVER UNMOUNTS / ZERO SHIFT) ──── */}
+            <div id="deck-persistent-piano-bed-slot" className="flex flex-col gap-2">
               <PianoBed
                 activeKey={activeKey}
                 accidentalPreference={accidentalPref}
@@ -2768,37 +2363,74 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
               />
             </div>
 
-            {/* ── Bottom Action Row (identical height in both steps) ────────── */}
-            <div className="flex items-center justify-between pt-2 min-h-[52px]">
-              <button
-                type="button"
-                onClick={() => {
-                  stopAllPipelines();
-                  setStep('SETUP');
-                }}
-                className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded-xl transition-colors cursor-pointer"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>{step === 'COUNTING_IN' ? '取消預備' : '重新錄製'}</span>
-              </button>
-
-              {step === 'COUNTING_IN' ? (
-                <div className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-400 text-sm font-bold select-none">
-                  <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-                  <span>倒數結束自動開始錄製...</span>
-                </div>
+            {/* ── SLOT 5: BOTTOM ACTION ROW (Fixed 52px, min-h-[52px]) ─────────── */}
+            <div className="flex items-center justify-between pt-1 min-h-[52px]">
+              {step === 'SETUP' ? (
+                <>
+                  <div>
+                    {onClose && (
+                      <button
+                        type="button"
+                        onClick={onClose}
+                        className="px-4 py-2.5 rounded-xl border border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 text-xs font-bold hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
+                      >
+                        關閉
+                      </button>
+                    )}
+                  </div>
+                  <button
+                    id="deck-start-recording-btn"
+                    type="button"
+                    onClick={startRecordingFlow}
+                    className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-zinc-950 font-black text-sm shadow-md transition-all active:scale-95 cursor-pointer"
+                  >
+                    {activeMode === 'hum' ? (
+                      <>
+                        <Mic2 className="w-4 h-4" />
+                        <span>開始哼唱收音 (Start Hum Recording)</span>
+                      </>
+                    ) : (
+                      <>
+                        <Keyboard className="w-4 h-4" />
+                        <span>開始鍵盤彈奏 (Start Keyboard Recording)</span>
+                      </>
+                    )}
+                  </button>
+                </>
               ) : (
-                <button
-                  id="deck-finish-recording-btn"
-                  type="button"
-                  onClick={handleFinishRecording}
-                  className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-black text-sm shadow-md transition-all active:scale-95 cursor-pointer"
-                >
-                  <Check className="w-4 h-4 stroke-[3]" />
-                  <span>完成轉寫並檢視 (Finish &amp; Review)</span>
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      stopAllPipelines();
+                      setStep('SETUP');
+                    }}
+                    className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded-xl transition-colors cursor-pointer"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>{step === 'COUNTING_IN' ? '取消預備' : '重新錄製'}</span>
+                  </button>
+
+                  {step === 'COUNTING_IN' ? (
+                    <div className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-400 text-sm font-bold select-none">
+                      <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                      <span>倒數結束自動開始錄製...</span>
+                    </div>
+                  ) : (
+                    <button
+                      id="deck-finish-recording-btn"
+                      type="button"
+                      onClick={handleFinishRecording}
+                      className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-black text-sm shadow-md transition-all active:scale-95 cursor-pointer"
+                    >
+                      <Check className="w-4 h-4 stroke-[3]" />
+                      <span>完成轉寫並檢視 (Finish &amp; Review)</span>
+                    </button>
+                  )}
+                </>
               )}
             </div>
+
           </div>
         )}
 
