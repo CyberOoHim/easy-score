@@ -137,7 +137,7 @@ describe('Stage 1: Keyboard Event Engine (lib/keyboard/keyEventEngine.ts)', () =
   it('detects rest gaps >= 80ms and generates discrete rest segments', () => {
     const clock = new VirtualClock();
     const engine = new KeyEventEngine(
-      { keySignature: 'C', bpm: 80, restThresholdMs: 80 },
+      { keySignature: 'C', bpm: 80, restThresholdMs: 80, filterOneFingerGaps: false },
       undefined,
       clock.now
     );

@@ -17,13 +17,13 @@
  */
 
 import {
-  PitchResult,
+  type PitchResult,
   computeMedian,
   frequencyToMidi,
   midiToFrequency,
   frequencyToCents,
   getMidiNoteInfo,
-} from './pitchDetector';
+} from './pitchDetector.ts';
 
 export interface PitchStabilizerConfig {
   /**

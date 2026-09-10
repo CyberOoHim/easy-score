@@ -10,7 +10,17 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: false,
   },
-  output: 'standalone',
+  // Static export for GitHub Pages only; Server/Cloud Run uses standalone runtime
+  ...(isStaticExport
+    ? {
+        output: 'export',
+        trailingSlash: true,
+        basePath: process.env.NEXT_PUBLIC_BASE_PATH || '',
+        assetPrefix: process.env.NEXT_PUBLIC_BASE_PATH || undefined,
+      }
+    : {
+        output: 'standalone',
+      }),
   images: {
     unoptimized: true,
   },

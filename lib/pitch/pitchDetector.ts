@@ -58,7 +58,7 @@ export {
   type PitchStabilizerConfig,
   type StabilizedPitchResult,
   DEFAULT_STABILIZER_CONFIG,
-} from './pitchStabilizer';
+} from './pitchStabilizer.ts';
 
 /**
  * Calculate RMS amplitude of an audio buffer.
@@ -328,7 +328,7 @@ export function detectPitch(
   };
 }
 
-import { PitchStabilizer, type StabilizedPitchResult } from './pitchStabilizer';
+import { PitchStabilizer, type StabilizedPitchResult } from './pitchStabilizer.ts';
 
 /**
  * Stateful Pitch Detector with multi-stage pitch stabilization
