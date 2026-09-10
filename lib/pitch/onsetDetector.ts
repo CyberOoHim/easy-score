@@ -125,13 +125,22 @@ export function fft(real: Float32Array, imag: Float32Array): void {
 
 /**
  * Compute the magnitude spectrum of a buffer applying a Hann window.
+ * Accepts optional pre-allocated real/imag work buffers (must be length fftSize) to
+ * avoid per-frame Float32Array allocations in the real-time audio hot path.
+ * Guards against fft() throwing on non-power-of-2 sizes.
  */
 export function computeMagnitudeSpectrum(
   buffer: Float32Array | number[],
-  fftSize: number = 512
+  fftSize: number = 512,
+  realBuf?: Float32Array,
+  imagBuf?: Float32Array
 ): Float32Array {
-  const real = new Float32Array(fftSize);
-  const imag = new Float32Array(fftSize);
+  const real: Float32Array = (realBuf && realBuf.length === fftSize)
+    ? (realBuf.fill(0), realBuf)
+    : new Float32Array(fftSize);
+  const imag: Float32Array = (imagBuf && imagBuf.length === fftSize)
+    ? (imagBuf.fill(0), imagBuf)
+    : new Float32Array(fftSize);
 
   const len = Math.min(buffer.length, fftSize);
   // Hann windowing
@@ -140,7 +149,12 @@ export function computeMagnitudeSpectrum(
     real[i] = buffer[i] * windowMultiplier;
   }
 
-  fft(real, imag);
+  try {
+    fft(real, imag);
+  } catch {
+    // fft requires power-of-2 size; return a zero spectrum if an invalid size slips through
+    return new Float32Array((fftSize >> 1) + 1);
+  }
 
   const half = (fftSize >> 1) + 1;
   const magnitudes = new Float32Array(half);
@@ -180,6 +194,10 @@ export class OnsetDetector {
   private lastOnsetTimeMs = -9999;
   private currentState: NoteState = 'SILENCE';
 
+  // Pre-allocated work buffers for FFT — reused every frame to avoid GC pressure.
+  private _fftReal: Float32Array;
+  private _fftImag: Float32Array;
+
   // Pitch tracking continuity
   private lastStablePitchHz: number | null = null;
   private lastStableMidi: number | null = null;
@@ -188,10 +206,17 @@ export class OnsetDetector {
 
   constructor(options?: Partial<OnsetDetectorConfig>) {
     this.config = { ...DEFAULT_ONSET_CONFIG, ...options };
+    this._fftReal = new Float32Array(this.config.frameSize);
+    this._fftImag = new Float32Array(this.config.frameSize);
   }
 
   public updateConfig(options: Partial<OnsetDetectorConfig>): void {
     this.config = { ...this.config, ...options };
+    // Re-allocate FFT buffers only if frameSize actually changed
+    if (options.frameSize !== undefined && options.frameSize !== this._fftReal.length) {
+      this._fftReal = new Float32Array(this.config.frameSize);
+      this._fftImag = new Float32Array(this.config.frameSize);
+    }
   }
 
   public reset(): void {
@@ -235,7 +260,12 @@ export class OnsetDetector {
 
     // 3. Compute spectral flux if active
     let spectralFlux = 0;
-    const currentSpectrum = isSilent ? null : computeMagnitudeSpectrum(buffer, this.config.frameSize);
+    const currentSpectrum = isSilent ? null : computeMagnitudeSpectrum(
+      buffer,
+      this.config.frameSize,
+      this._fftReal,
+      this._fftImag
+    );
     if (currentSpectrum) {
       if (this.previousSpectrum) {
         spectralFlux = calculateSpectralFlux(currentSpectrum, this.previousSpectrum);

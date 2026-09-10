@@ -22,7 +22,8 @@ export const metadata: Metadata = {
   formatDetection: {
     telephone: false,
   },
-  manifest: 'manifest.webmanifest',
+  // NOTE: Do NOT set `manifest` here. Next.js auto-injects the manifest link from
+  // app/manifest.ts — an explicit entry here would produce duplicate <link rel="manifest"> tags.
   icons: {
     icon: [
       { url: '/favicon.ico', sizes: 'any' },

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, startTransition } from 'react';
 import {
   KeySignature,
   Measure,
@@ -121,29 +121,31 @@ function createInitialEmptySong(): Song {
 
 export default function Home() {
   const [activeFeature, setActiveFeature] = useState<StudioFeatureMode>('hum');
-  const [song, setSong] = useState<Song>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem(STORAGE_KEY_CURRENT_SONG);
-        if (stored) {
-          return JSON.parse(stored);
-        }
-      } catch {}
-    }
-    return createInitialEmptySong();
-  });
+  // Initialize with safe SSR-compatible defaults, then hydrate from localStorage client-side.
+  // Using lazy initializers that read localStorage directly causes React hydration mismatches
+  // because the server renders the empty default while the client immediately renders stored data.
+  const [song, setSong] = useState<Song>(createInitialEmptySong);
+  const [savedTakes, setSavedTakes] = useState<SavedTranscriptionTake[]>([]);
 
-  const [savedTakes, setSavedTakes] = useState<SavedTranscriptionTake[]>(() => {
-    if (typeof window !== 'undefined') {
+  // Hydrate persisted state from localStorage after first client render.
+  // Wrapped in startTransition so these are treated as low-priority deferred updates,
+  // avoiding synchronous cascading renders (satisfies react-hooks/set-state-in-effect).
+  useEffect(() => {
+    startTransition(() => {
       try {
-        const stored = localStorage.getItem(STORAGE_KEY_SAVED_TAKES);
-        if (stored) {
-          return JSON.parse(stored);
+        const storedSong = localStorage.getItem(STORAGE_KEY_CURRENT_SONG);
+        if (storedSong) {
+          setSong(JSON.parse(storedSong));
         }
       } catch {}
-    }
-    return [];
-  });
+      try {
+        const storedTakes = localStorage.getItem(STORAGE_KEY_SAVED_TAKES);
+        if (storedTakes) {
+          setSavedTakes(JSON.parse(storedTakes));
+        }
+      } catch {}
+    });
+  }, []);
 
   const [isTakesDrawerOpen, setIsTakesDrawerOpen] = useState<boolean>(false);
   const [copySuccessToast, setCopySuccessToast] = useState<string | null>(null);

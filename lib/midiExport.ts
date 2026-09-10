@@ -347,7 +347,9 @@ function buildKaraokeWordsTrack(song: Song, options: MidiExportOptions): number[
     }
   }
 
-  let currentTick = 0;
+  // Use an absolute cumulative beat counter to derive ticks, avoiding drift from
+  // accumulated rounding errors when computing each note's delta independently.
+  let cumulativeBeats = 0;
   let isNextVerse = true;
   let isNextLine = false;
   let lastSectionName = '';
@@ -382,13 +384,13 @@ function buildKaraokeWordsTrack(song: Song, options: MidiExportOptions): number[
       }
 
       const noteDurationBeats = typeof note.duration === 'number' ? note.duration : 1;
-      const noteTicks = Math.round(noteDurationBeats * TICKS_PER_BEAT);
+      const currentTick = Math.round(cumulativeBeats * TICKS_PER_BEAT);
 
       const prevNote = nIdx > 0 ? notes[nIdx - 1] : mIdx > 0 ? song.measures[mIdx - 1]?.notes?.slice(-1)[0] : null;
       const isContinuationOfTie = isTieActive(prevNote, note);
 
       if (isContinuationOfTie) {
-        currentTick += noteTicks;
+        cumulativeBeats += noteDurationBeats;
         continue;
       }
 
@@ -396,7 +398,7 @@ function buildKaraokeWordsTrack(song: Song, options: MidiExportOptions): number[
 
       if (isLineBreak) {
         isNextLine = true;
-        currentTick += noteTicks;
+        cumulativeBeats += noteDurationBeats;
         continue;
       }
 
@@ -430,7 +432,7 @@ function buildKaraokeWordsTrack(song: Song, options: MidiExportOptions): number[
         });
       }
 
-      currentTick += noteTicks;
+      cumulativeBeats += noteDurationBeats;
     }
 
     if (measure.isLineBreak) {
@@ -471,8 +473,9 @@ function buildMelodyTrack(song: Song, options: MidiExportOptions): number[] {
   const lyricType = options.lyricType || 'hanlo';
   const includeMelodyLyrics = options.includeMelodyLyrics ?? true;
 
-  // Flatten notes across measures with measure markers
-  let currentTick = 0;
+  // Use an absolute cumulative beat counter to derive ticks, avoiding drift from
+  // accumulated rounding errors when computing each note's delta independently.
+  let cumulativeBeats = 0;
 
   for (let mIdx = 0; mIdx < song.measures.length; mIdx++) {
     const measure = song.measures[mIdx];
@@ -481,7 +484,7 @@ function buildMelodyTrack(song: Song, options: MidiExportOptions): number[] {
     if (measure.section && measure.section.trim()) {
       const sectionBytes = stringToBytes(measure.section.trim());
       events.push({
-        tick: currentTick,
+        tick: Math.round(cumulativeBeats * TICKS_PER_BEAT),
         priority: 0,
         data: [0xff, 0x06, ...writeVLQ(sectionBytes.length), ...sectionBytes],
       });
@@ -498,14 +501,14 @@ function buildMelodyTrack(song: Song, options: MidiExportOptions): number[] {
       }
 
       const noteDurationBeats = typeof note.duration === 'number' ? note.duration : 1;
-      const noteTicks = Math.round(noteDurationBeats * TICKS_PER_BEAT);
+      const currentTick = Math.round(cumulativeBeats * TICKS_PER_BEAT);
 
       // Check if this note is the destination of a continuous tie from the previous note
       const prevNote = nIdx > 0 ? notes[nIdx - 1] : mIdx > 0 ? song.measures[mIdx - 1]?.notes?.slice(-1)[0] : null;
       const isContinuationOfTie = isTieActive(prevNote, note);
 
       if (isContinuationOfTie) {
-        currentTick += noteTicks;
+        cumulativeBeats += noteDurationBeats;
         continue;
       }
 
@@ -628,7 +631,7 @@ function buildMelodyTrack(song: Song, options: MidiExportOptions): number[] {
         });
       }
 
-      currentTick += noteTicks;
+      cumulativeBeats += noteDurationBeats;
     }
   }
 

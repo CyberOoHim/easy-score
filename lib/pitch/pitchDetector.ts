@@ -136,10 +136,14 @@ export function computeMedian(values: number[]): number {
 
 /**
  * Pure function: Detect pitch on an audio buffer using autocorrelation difference algorithm.
+ * Optionally accepts pre-allocated work buffers (diffBuf, cmndfBuf) to avoid GC pressure
+ * in real-time hot paths; callers should size them to at least (tauMax + 1).
  */
 export function detectPitch(
   buffer: Float32Array | number[],
-  options?: Partial<PitchDetectorConfig>
+  options?: Partial<PitchDetectorConfig>,
+  diffBuf?: Float32Array,
+  cmndfBuf?: Float32Array
 ): PitchResult {
   const config: PitchDetectorConfig = { ...DEFAULT_PITCH_CONFIG, ...options };
   const {
@@ -186,7 +190,10 @@ export function detectPitch(
   }
 
   // Step 1: Difference function d(tau) = sum_{j=0}^{W-1} (x[j] - x[j + tau])^2
-  const diff = new Float32Array(tauMax + 1);
+  // Reuse caller-supplied buffer if provided and large enough, else allocate.
+  const diff: Float32Array = (diffBuf && diffBuf.length >= tauMax + 1)
+    ? (diffBuf.fill(0, 0, tauMax + 1), diffBuf)
+    : new Float32Array(tauMax + 1);
   for (let tau = 1; tau <= tauMax; tau++) {
     let sum = 0;
     for (let j = 0; j < halfBufferSize; j++) {
@@ -197,7 +204,10 @@ export function detectPitch(
   }
 
   // Step 2: Cumulative Mean Normalized Difference Function (CMNDF)
-  const cmndf = new Float32Array(tauMax + 1);
+  // Reuse caller-supplied buffer if provided and large enough, else allocate.
+  const cmndf: Float32Array = (cmndfBuf && cmndfBuf.length >= tauMax + 1)
+    ? (cmndfBuf.fill(0, 0, tauMax + 1), cmndfBuf)
+    : new Float32Array(tauMax + 1);
   cmndf[0] = 1;
   let runningSum = 0;
   for (let tau = 1; tau <= tauMax; tau++) {
@@ -333,10 +343,18 @@ import { PitchStabilizer, type StabilizedPitchResult } from './pitchStabilizer.t
 /**
  * Stateful Pitch Detector with multi-stage pitch stabilization
  * (adaptive median filtering, EMA low-pass, Schmitt trigger hysteresis, and needle dampening).
+ *
+ * Pre-allocates reusable Float32Array work buffers to eliminate per-frame GC pressure
+ * in the real-time audio processing hot path (~86 frames/sec).
  */
 export class PitchDetector {
   private config: PitchDetectorConfig;
   private stabilizer: PitchStabilizer;
+
+  // Pre-allocated work buffers — reused every frame to avoid GC pressure.
+  // Sized to the maximum possible lag (sampleRate / minFrequency).
+  private _diffBuf: Float32Array;
+  private _cmndfBuf: Float32Array;
 
   constructor(options?: Partial<PitchDetectorConfig>) {
     this.config = { ...DEFAULT_PITCH_CONFIG, ...options };
@@ -344,6 +362,9 @@ export class PitchDetector {
       strength: this.config.stabilizerStrength ?? 0.50,
       sampleRate: this.config.sampleRate,
     });
+    const maxLag = Math.floor(this.config.sampleRate / this.config.minFrequency) + 2;
+    this._diffBuf = new Float32Array(maxLag + 1);
+    this._cmndfBuf = new Float32Array(maxLag + 1);
   }
 
   public updateConfig(options: Partial<PitchDetectorConfig>): void {
@@ -353,6 +374,14 @@ export class PitchDetector {
     }
     if (options.sampleRate !== undefined) {
       this.stabilizer.updateConfig({ sampleRate: options.sampleRate });
+    }
+    // Re-size work buffers if frequency range changed
+    if (options.sampleRate !== undefined || options.minFrequency !== undefined) {
+      const maxLag = Math.floor(this.config.sampleRate / this.config.minFrequency) + 2;
+      if (maxLag + 1 > this._diffBuf.length) {
+        this._diffBuf = new Float32Array(maxLag + 1);
+        this._cmndfBuf = new Float32Array(maxLag + 1);
+      }
     }
   }
 
@@ -382,9 +411,10 @@ export class PitchDetector {
 
   /**
    * Detect raw instantaneous pitch on an audio buffer.
+   * Uses pre-allocated work buffers to avoid per-frame GC pressure.
    */
   public detect(buffer: Float32Array | number[]): PitchResult {
-    return detectPitch(buffer, this.config);
+    return detectPitch(buffer, this.config, this._diffBuf, this._cmndfBuf);
   }
 
   /**
