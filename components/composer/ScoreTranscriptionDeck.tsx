@@ -466,7 +466,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
       if (!data) return;
 
       if (activeMode === 'keyboard') {
-        if (step === 'RECORDING' && keyEngineRef.current) {
+        if ((step === 'RECORDING' || step === 'COUNTING_IN') && keyEngineRef.current) {
           keyEngineRef.current.handleMidiMessage(event);
         } else if (step === 'SETUP' || step === 'REVIEW') {
           if ((data[0] & 0xf0) === 0x90 && (data.length <= 2 || data[2] > 0)) {
@@ -1555,8 +1555,8 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
         return;
       }
 
-      if (step === 'RECORDING') {
-        if (e.code === 'Enter') {
+      if (step === 'RECORDING' || step === 'COUNTING_IN') {
+        if (step === 'RECORDING' && e.code === 'Enter') {
           e.preventDefault();
           handleFinishRecording();
           return;
@@ -1569,13 +1569,13 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (step === 'RECORDING' && activeMode === 'keyboard' && keyEngineRef.current) {
+      if ((step === 'RECORDING' || step === 'COUNTING_IN') && activeMode === 'keyboard' && keyEngineRef.current) {
         keyEngineRef.current.handleKeyUp(e);
       }
     };
 
     const handleBlur = () => {
-      if (step === 'RECORDING' && activeMode === 'keyboard' && keyEngineRef.current) {
+      if ((step === 'RECORDING' || step === 'COUNTING_IN') && activeMode === 'keyboard' && keyEngineRef.current) {
         keyEngineRef.current.releaseAllActiveKeys();
       }
     };
@@ -1697,7 +1697,9 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
         <div className="flex items-center gap-1 text-[11px] font-mono text-zinc-500">
           <span className={step === 'SETUP' ? 'text-amber-400 font-bold' : ''}>設定</span>
           <span>→</span>
-          <span className={step === 'RECORDING' ? 'text-amber-400 font-bold' : ''}>錄製</span>
+          <span className={step === 'RECORDING' || step === 'COUNTING_IN' ? 'text-amber-400 font-bold' : ''}>
+            {step === 'COUNTING_IN' ? '預備倒數' : '錄製'}
+          </span>
           <span>→</span>
           <span className={step === 'REVIEW' ? 'text-amber-400 font-bold' : ''}>檢視微調</span>
         </div>
@@ -2454,28 +2456,106 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
         {/* STEP 2: COUNTING_IN                                                     */}
         {/* ======================================================================= */}
         {step === 'COUNTING_IN' && (
-          <div className="flex flex-col items-center justify-center p-12 gap-6 my-4 animate-in zoom-in-95 duration-200">
-            <span className="text-xs font-mono font-bold uppercase tracking-widest text-amber-500">
-              準備就緒 · 預備拍 ({countdownBeatsCount} 拍倒數)
-            </span>
-            <div className="w-32 h-32 rounded-full bg-amber-500 text-zinc-950 flex items-center justify-center text-7xl font-black font-mono shadow-2xl shadow-amber-500/30 ring-8 ring-amber-400/30 animate-pulse">
-              {countdownBeat}
+          <div className="flex flex-col gap-5 animate-in fade-in duration-200">
+            {/* Status Header */}
+            <div className="flex items-center justify-between px-4 py-2.5 bg-amber-500/15 border border-amber-500/30 rounded-2xl flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full bg-amber-500 animate-ping" />
+                <span className="text-xs font-black text-amber-700 dark:text-amber-300 uppercase tracking-wider">
+                  {activeMode === 'hum'
+                    ? `哼唱預備 · 倒數 ${countdownBeat} 拍`
+                    : `琴鍵預備 · 倒數 ${countdownBeat} 拍`}
+                </span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-mono text-amber-600 dark:text-amber-400 font-bold hidden sm:inline">
+                  {countdownBeatsCount} 拍預備拍 · 速度 {activeBpm} BPM
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    stopAllPipelines();
+                    setStep('SETUP');
+                  }}
+                  className="px-3 py-1 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-bold text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
+                >
+                  取消預備
+                </button>
+              </div>
             </div>
-            <p className="text-xs text-zinc-500">
-              {activeMode === 'hum'
-                ? '請對準麥克風，倒數結束後開始哼唱...'
-                : '請將雙手置於琴鍵，倒數結束後開始彈奏...'}
-            </p>
-            <button
-              type="button"
-              onClick={() => {
-                stopAllPipelines();
-                setStep('SETUP');
-              }}
-              className="px-4 py-1.5 rounded-xl border border-zinc-700 text-xs font-bold text-zinc-400 hover:text-zinc-200 cursor-pointer"
-            >
-              取消預備
-            </button>
+
+            {/* Prominent Countdown & Readiness Banner */}
+            <div className="flex flex-col sm:flex-row items-center justify-between p-5 bg-gradient-to-r from-amber-500/15 via-amber-500/5 to-zinc-900/60 border border-amber-500/30 rounded-2xl gap-4">
+              <div className="flex items-center gap-4">
+                <div
+                  key={countdownBeat}
+                  className="relative w-18 h-18 sm:w-20 sm:h-20 shrink-0 rounded-2xl bg-gradient-to-br from-amber-400 to-amber-500 text-zinc-950 flex items-center justify-center text-5xl font-black font-mono shadow-xl shadow-amber-500/25 ring-4 ring-amber-400/30 animate-pulse select-none"
+                >
+                  {countdownBeat}
+                </div>
+                <div className="flex flex-col gap-1">
+                  <span className="text-sm sm:text-base font-extrabold text-zinc-900 dark:text-zinc-100">
+                    {activeMode === 'hum'
+                      ? '請對準麥克風，倒數結束後開始哼唱...'
+                      : '請將雙手置於琴鍵，倒數結束後開始彈奏...'}
+                  </span>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                    {activeMode === 'hum'
+                      ? '下方琴鍵可隨時點擊試聽音高協助定音 · 倒數結束自動開始收音'
+                      : '下方琴鍵已就緒 · 支援螢幕觸控、滑鼠點擊與電腦鍵盤 (A~K 鍵)'}
+                  </p>
+                  {/* Beat Progress Dots */}
+                  <div className="flex items-center gap-1.5 mt-1.5">
+                    {Array.from({ length: countdownBeatsCount }).map((_, idx) => {
+                      const beatNum = countdownBeatsCount - idx;
+                      const isCurrent = countdownBeat === beatNum;
+                      const isPassed = countdownBeat < beatNum;
+                      return (
+                        <div
+                          key={idx}
+                          className={`h-2 rounded-full transition-all duration-150 ${
+                            isCurrent
+                              ? 'w-7 bg-amber-500 shadow-sm shadow-amber-500/50'
+                              : isPassed
+                                ? 'w-2 bg-amber-500/30'
+                                : 'w-2 bg-zinc-300 dark:bg-zinc-700'
+                          }`}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    stopAllPipelines();
+                    setStep('SETUP');
+                  }}
+                  className="px-4 py-2 rounded-xl border border-zinc-300 dark:border-zinc-700 text-xs font-bold text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
+                >
+                  返回設定
+                </button>
+              </div>
+            </div>
+
+            {/* PERSISTENT PIANO BED IN COUNTING_IN */}
+            <div className="flex flex-col gap-2">
+              <PianoBed
+                activeKey={activeKey}
+                accidentalPreference={accidentalPref}
+                octaveBedView={octaveBedView}
+                onOctaveBedViewChange={setOctaveBedView}
+                activeMidiSet={activeMidiSet}
+                detectedPitchMidi={activeMode === 'hum' && isVoiced ? currentMidi : null}
+                onNoteDown={handlePianoNoteDown}
+                onNoteUp={handlePianoNoteUp}
+                mode={activeMode === 'hum' ? 'align' : 'record'}
+                octaveShiftVal={octaveShiftVal}
+              />
+            </div>
           </div>
         )}
 
