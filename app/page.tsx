@@ -495,12 +495,12 @@ export default function Home() {
                     : '螢幕觸控 / 電腦打字 / MIDI 鍵盤彈奏轉譜'}
                 </span>
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-mono font-bold">
-                  {activeFeature === 'hum' ? 'MICROPHONE / YIN PITCH ENGINE' : 'KEYBOARD & WEB MIDI ENGINE'}
+                  {activeFeature === 'hum' ? 'MICROPHONE / VOCAL PITCH ENGINE' : 'KEYBOARD & WEB MIDI ENGINE'}
                 </span>
               </h2>
               <p className="text-xs text-zinc-400 mt-0.5">
                 {activeFeature === 'hum'
-                  ? '佩戴耳機以清晰「噠/啦」唱音或吹奏笛子，系統將自動進行基頻 YIN 偵測、音頭切分與節奏量化。'
+                  ? '佩戴耳機以清晰「噠/啦」唱音或吹奏笛子，系統將自動進行基頻音高偵測、音頭切分與節奏量化。'
                   : '使用螢幕鋼琴、電腦鍵盤 (A~K 鍵為 1~7 音) 或插入 USB/藍牙 MIDI 琴鍵彈奏轉寫。'}
               </p>
             </div>

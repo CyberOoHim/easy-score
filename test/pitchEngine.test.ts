@@ -1,15 +1,15 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import {
-  YinDetector,
-  detectYinPitch,
+  PitchDetector,
+  detectPitch,
   frequencyToMidi,
   midiToFrequency,
   frequencyToCents,
   getMidiNoteInfo,
   calculateRms,
   computeMedian,
-} from '../lib/pitch/yinDetector.ts';
+} from '../lib/pitch/pitchDetector.ts';
 import {
   OnsetDetector,
   NoteSegmenter,
@@ -23,6 +23,7 @@ import {
   type ScaleMode,
   quantizeDurationToBeats,
   quantizeRawSegments,
+  cleanRawSegments,
   segmentNotesIntoMeasures,
   transcribeAudioSegmentsToMeasures,
   shiftOctaves,
@@ -90,13 +91,13 @@ describe('Stage 1: Musical Conversion Utilities', () => {
   });
 });
 
-describe('Stage 1: YIN Pitch Detection Benchmarks', () => {
+describe('Stage 1: Vocal Pitch Detection Benchmarks', () => {
   const sampleRate = 44100;
   const bufferSize = 2048;
 
   it('detects standard concert pitch A4 (440.0 Hz) within 0.5 Hz tolerance', () => {
     const buffer = generateSineBuffer(440.0, bufferSize, sampleRate, 0.7);
-    const result = detectYinPitch(buffer, { sampleRate });
+    const result = detectPitch(buffer, { sampleRate });
 
     assert.strictEqual(result.isPitched, true);
     assert.ok(result.frequency !== null);
@@ -110,7 +111,7 @@ describe('Stage 1: YIN Pitch Detection Benchmarks', () => {
 
   it('detects Middle C C4 (261.63 Hz) within 0.5 Hz tolerance', () => {
     const buffer = generateSineBuffer(261.63, bufferSize, sampleRate, 0.7);
-    const result = detectYinPitch(buffer, { sampleRate });
+    const result = detectPitch(buffer, { sampleRate });
 
     assert.strictEqual(result.isPitched, true);
     assert.ok(result.frequency !== null);
@@ -123,7 +124,7 @@ describe('Stage 1: YIN Pitch Detection Benchmarks', () => {
 
   it('detects high flute tone E5 (659.25 Hz)', () => {
     const buffer = generateSineBuffer(659.25, bufferSize, sampleRate, 0.6);
-    const result = detectYinPitch(buffer, { sampleRate });
+    const result = detectPitch(buffer, { sampleRate });
 
     assert.strictEqual(result.isPitched, true);
     assert.strictEqual(result.nearestMidi, 76);
@@ -134,7 +135,7 @@ describe('Stage 1: YIN Pitch Detection Benchmarks', () => {
 
   it('detects low vocal/guitar tone G3 (196.00 Hz)', () => {
     const buffer = generateSineBuffer(196.00, bufferSize, sampleRate, 0.6);
-    const result = detectYinPitch(buffer, { sampleRate });
+    const result = detectPitch(buffer, { sampleRate });
 
     assert.strictEqual(result.isPitched, true);
     assert.strictEqual(result.nearestMidi, 55);
@@ -150,7 +151,7 @@ describe('Stage 1: YIN Pitch Detection Benchmarks', () => {
       { factor: 3, relativeAmp: 0.9 }, // 660 Hz
     ]);
 
-    const result = detectYinPitch(complexBuffer, { sampleRate, threshold: 0.15 });
+    const result = detectPitch(complexBuffer, { sampleRate, threshold: 0.15 });
 
     assert.strictEqual(result.isPitched, true);
     // Crucial check: Fundamental must be detected as ~220Hz (A3, MIDI 57), NOT 440Hz (A4, MIDI 69)
@@ -162,7 +163,7 @@ describe('Stage 1: YIN Pitch Detection Benchmarks', () => {
 
   it('safely rejects silence and background ambient noise', () => {
     const silentBuffer = new Float32Array(bufferSize);
-    const resultSilent = detectYinPitch(silentBuffer, { sampleRate });
+    const resultSilent = detectPitch(silentBuffer, { sampleRate });
     assert.strictEqual(resultSilent.isPitched, false);
     assert.strictEqual(resultSilent.frequency, null);
 
@@ -171,13 +172,13 @@ describe('Stage 1: YIN Pitch Detection Benchmarks', () => {
     for (let i = 0; i < bufferSize; i++) {
       noiseBuffer[i] = (Math.random() - 0.5) * 0.002;
     }
-    const resultNoise = detectYinPitch(noiseBuffer, { sampleRate });
+    const resultNoise = detectPitch(noiseBuffer, { sampleRate });
     assert.strictEqual(resultNoise.isPitched, false);
     assert.strictEqual(resultNoise.frequency, null);
   });
 
-  it('smooths micro-vibrato using YinDetector.detectSmoothed', () => {
-    const detector = new YinDetector({ sampleRate, medianFilterSize: 5 });
+  it('smooths micro-vibrato using PitchDetector.detectSmoothed', () => {
+    const detector = new PitchDetector({ sampleRate, medianFilterSize: 5 });
 
     // Stream 5 frames with ±15 cents natural vibrato (436Hz to 444Hz)
     const vibratoFrequencies = [440.0, 443.5, 437.0, 442.8, 439.5];
@@ -880,6 +881,92 @@ describe('Enhanced Vocal Pitch & Beat Length Accuracy (Hum-to-Score)', () => {
       Math.abs((segments[0].frequencyHz ?? 0) - 261.63) < 1.0,
       `Frequency should be close to 261.63, got ${segments[0].frequencyHz}`
     );
+  });
+
+  it('robustly extracts the closest pitch on breathy/soft hums with higher CMNDF dip', () => {
+    const sampleRate = 44100;
+    const detector = new PitchDetector({ sampleRate, fallbackThreshold: 0.55 });
+
+    // Generate soft hum around D4 (293.66 Hz) with added noise simulation
+    const d4Buffer = generateSineBuffer(293.66, 1024, sampleRate, 0.12);
+    // Add non-periodic breath noise
+    for (let i = 0; i < d4Buffer.length; i++) {
+      d4Buffer[i] += (Math.random() - 0.5) * 0.04;
+    }
+
+    const res = detector.detectSmoothed(d4Buffer);
+    assert.strictEqual(res.isPitched, true, 'Soft hum should be recognized as pitched');
+    assert.strictEqual(res.nearestMidi, 62, 'Should detect nearest MIDI 62 (D4)');
+    assert.ok(
+      Math.abs((res.frequency ?? 0) - 293.66) < 3.0,
+      `Frequency should be close to 293.66, got ${res.frequency}`
+    );
+  });
+
+  it('preserves exact beat lengths (0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0 beats) without clipping', () => {
+    const bpm = 80; // 750ms per beat
+    const msPerBeat = 750;
+
+    // 0.5 beat (375ms)
+    assert.strictEqual(quantizeDurationToBeats(msPerBeat * 0.5, bpm, 'eighth').duration, 0.5);
+    // 1.0 beat (750ms)
+    assert.strictEqual(quantizeDurationToBeats(msPerBeat * 1.0, bpm, 'eighth').duration, 1.0);
+    // 1.5 beats (1125ms)
+    assert.strictEqual(quantizeDurationToBeats(msPerBeat * 1.5, bpm, 'eighth').duration, 1.5);
+    // 2.0 beats (1500ms)
+    assert.strictEqual(quantizeDurationToBeats(msPerBeat * 2.0, bpm, 'eighth').duration, 2.0);
+    // 2.5 beats (1875ms)
+    assert.strictEqual(quantizeDurationToBeats(msPerBeat * 2.5, bpm, 'eighth').duration, 2.5);
+    // 3.0 beats (2250ms)
+    assert.strictEqual(quantizeDurationToBeats(msPerBeat * 3.0, bpm, 'eighth').duration, 3.0);
+    // 3.5 beats (2625ms)
+    assert.strictEqual(quantizeDurationToBeats(msPerBeat * 3.5, bpm, 'eighth').duration, 3.5);
+    // 4.0 beats (3000ms)
+    assert.strictEqual(quantizeDurationToBeats(msPerBeat * 4.0, bpm, 'eighth').duration, 4.0);
+    // 5.0 beats (3750ms) sustained across measures
+    assert.strictEqual(quantizeDurationToBeats(msPerBeat * 5.0, bpm, 'eighth').duration, 5.0);
+  });
+
+  it('merges accidental same-pitch split segments during a continuous hum into one note', () => {
+    // Simulate a 2-beat hum on G4 (MIDI 67) where a slight energy dip split it into two 1-beat segments
+    const splitSegments: RawNoteSegment[] = [
+      {
+        startTimeMs: 0,
+        endTimeMs: 750,
+        durationMs: 750,
+        midi: 67,
+        frequencyHz: 392.0,
+        avgRms: 0.25,
+        pitchSamples: [392.0],
+      },
+      {
+        startTimeMs: 750,
+        endTimeMs: 1500,
+        durationMs: 750,
+        midi: 67,
+        frequencyHz: 392.0,
+        avgRms: 0.22,
+        pitchSamples: [392.0],
+      },
+    ];
+
+    const merged = cleanRawSegments(splitSegments, 60, true, true, 80);
+    assert.strictEqual(merged.length, 1, 'Should merge into a single continuous segment');
+    assert.strictEqual(merged[0].durationMs, 1500, 'Duration should equal full 1500ms (2 beats)');
+    assert.strictEqual(merged[0].midi, 67);
+
+    const result = transcribeAudioSegmentsToMeasures(splitSegments, {
+      bpm: 80,
+      timeSignature: '4/4',
+      key: 'C',
+      grid: 'eighth',
+    });
+
+    assert.strictEqual(result.measures.length, 1);
+    const notes = result.measures[0].notes;
+    assert.strictEqual(notes.length, 1, 'Should transcribe as a single 2-beat note');
+    assert.strictEqual(notes[0].pitch, 5); // G4 in Key C = 5 (Sol)
+    assert.strictEqual(notes[0].duration, 2);
   });
 });
 

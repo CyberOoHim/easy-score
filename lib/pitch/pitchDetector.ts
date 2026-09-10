@@ -1,15 +1,15 @@
 /**
- * YIN Pitch Detection Algorithm
+ * Autocorrelation Vocal & Monophonic Pitch Detection Algorithm
  *
  * Implements time-domain pitch tracking using the Difference Function,
- * Cumulative Mean Normalized Difference Function (CMNDF), absolute thresholding,
- * and parabolic interpolation as described by De Cheveigné & Kawahara (2002).
+ * Cumulative Mean Normalized Difference Function (CMNDF), multi-trough
+ * thresholding, and parabolic peak interpolation.
  *
  * Optimized for real-time monophonic vocal humming and acoustic traditional
  * instruments (Bamboo Flute, Erhu, Acoustic Guitar).
  */
 
-export interface YinDetectorConfig {
+export interface PitchDetectorConfig {
   sampleRate: number;         // Audio sample rate in Hz (default: 44100)
   threshold: number;          // Dip threshold for CMNDF (default: 0.15)
   minFrequency: number;       // Lowest expected fundamental f0 in Hz (default: 65 Hz ~ C2)
@@ -41,7 +41,7 @@ export interface MidiNoteInfo {
 
 export const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'] as const;
 
-export const DEFAULT_YIN_CONFIG: Readonly<YinDetectorConfig> = {
+export const DEFAULT_PITCH_CONFIG: Readonly<PitchDetectorConfig> = {
   sampleRate: 44100,
   threshold: 0.15,
   minFrequency: 65,
@@ -126,13 +126,13 @@ export function computeMedian(values: number[]): number {
 }
 
 /**
- * Pure function: Detect pitch on an audio buffer using the YIN algorithm.
+ * Pure function: Detect pitch on an audio buffer using autocorrelation difference algorithm.
  */
-export function detectYinPitch(
+export function detectPitch(
   buffer: Float32Array | number[],
-  options?: Partial<YinDetectorConfig>
+  options?: Partial<PitchDetectorConfig>
 ): PitchResult {
-  const config: YinDetectorConfig = { ...DEFAULT_YIN_CONFIG, ...options };
+  const config: PitchDetectorConfig = { ...DEFAULT_PITCH_CONFIG, ...options };
   const {
     sampleRate,
     threshold,
@@ -188,8 +188,6 @@ export function detectYinPitch(
   }
 
   // Step 2: Cumulative Mean Normalized Difference Function (CMNDF)
-  // cmndf[0] = 1
-  // cmndf[tau] = diff[tau] / ((1 / tau) * sum_{j=1}^{tau} diff[j])
   const cmndf = new Float32Array(tauMax + 1);
   cmndf[0] = 1;
   let runningSum = 0;
@@ -202,24 +200,44 @@ export function detectYinPitch(
     }
   }
 
-  // Step 3: Absolute Thresholding
-  // Search for the smallest tau that dips below threshold, then follow to local minimum
+  // Step 3: Multi-Trough Peak Search & Thresholding
+  // Search for the first local minimum below threshold (prevents subharmonic octave drops)
   let tauCandidate = -1;
   let minCmndfVal = 1.0;
 
-  for (let tau = tauMin; tau <= tauMax; tau++) {
-    if (cmndf[tau] < threshold) {
-      // Follow the dip to its local trough
-      while (tau + 1 <= tauMax && cmndf[tau + 1] < cmndf[tau]) {
-        tau++;
-      }
-      tauCandidate = tau;
-      minCmndfVal = cmndf[tau];
+  interface LocalTrough {
+    tau: number;
+    val: number;
+  }
+  const troughs: LocalTrough[] = [];
+
+  for (let tau = tauMin + 1; tau < tauMax; tau++) {
+    if (cmndf[tau] < cmndf[tau - 1] && cmndf[tau] <= cmndf[tau + 1]) {
+      troughs.push({ tau, val: cmndf[tau] });
+    }
+  }
+
+  // 3a. First local minimum below absolute threshold
+  for (const trough of troughs) {
+    if (trough.val < threshold) {
+      tauCandidate = trough.tau;
+      minCmndfVal = trough.val;
       break;
     }
   }
 
-  // If no dip was below the threshold, find the global minimum in range
+  // 3b. If no trough below threshold, look for first trough below fallbackThreshold
+  if (tauCandidate === -1) {
+    for (const trough of troughs) {
+      if (trough.val <= fallbackThreshold) {
+        tauCandidate = trough.tau;
+        minCmndfVal = trough.val;
+        break;
+      }
+    }
+  }
+
+  // 3c. If still not found, check global minimum across all troughs or range
   if (tauCandidate === -1) {
     let globalMinTau = tauMin;
     let globalMinVal = cmndf[tauMin];
@@ -230,9 +248,24 @@ export function detectYinPitch(
       }
     }
 
-    if (globalMinVal <= fallbackThreshold) {
+    const effectiveMaxFallback = Math.max(0.55, fallbackThreshold);
+    if (globalMinVal <= effectiveMaxFallback) {
       tauCandidate = globalMinTau;
       minCmndfVal = globalMinVal;
+    }
+  }
+
+  // 3d. Subharmonic / Octave Halving Correction:
+  if (tauCandidate > 2 * tauMin) {
+    const halfTau = Math.round(tauCandidate / 2);
+    for (let t = Math.max(tauMin, halfTau - 2); t <= Math.min(tauMax, halfTau + 2); t++) {
+      if (cmndf[t] < threshold + 0.08 || cmndf[t] <= minCmndfVal * 1.35 + 0.04) {
+        if (t > tauMin && t < tauMax && cmndf[t] <= cmndf[t - 1] && cmndf[t] <= cmndf[t + 1]) {
+          tauCandidate = t;
+          minCmndfVal = cmndf[t];
+          break;
+        }
+      }
     }
   }
 
@@ -287,23 +320,23 @@ export function detectYinPitch(
 }
 
 /**
- * Stateful YIN Pitch Detector with micro-vibrato median smoothing
+ * Stateful Pitch Detector with micro-vibrato median smoothing
  * and historical continuity tracking.
  */
-export class YinDetector {
-  private config: YinDetectorConfig;
+export class PitchDetector {
+  private config: PitchDetectorConfig;
   private recentPitches: number[] = [];
   private consecutiveUnpitchedCount = 0;
 
-  constructor(options?: Partial<YinDetectorConfig>) {
-    this.config = { ...DEFAULT_YIN_CONFIG, ...options };
+  constructor(options?: Partial<PitchDetectorConfig>) {
+    this.config = { ...DEFAULT_PITCH_CONFIG, ...options };
   }
 
-  public updateConfig(options: Partial<YinDetectorConfig>): void {
+  public updateConfig(options: Partial<PitchDetectorConfig>): void {
     this.config = { ...this.config, ...options };
   }
 
-  public getConfig(): Readonly<YinDetectorConfig> {
+  public getConfig(): Readonly<PitchDetectorConfig> {
     return this.config;
   }
 
@@ -319,7 +352,7 @@ export class YinDetector {
    * Detect raw instantaneous pitch on an audio buffer.
    */
   public detect(buffer: Float32Array | number[]): PitchResult {
-    return detectYinPitch(buffer, this.config);
+    return detectPitch(buffer, this.config);
   }
 
   /**
@@ -331,15 +364,49 @@ export class YinDetector {
 
     if (!rawResult.isPitched || rawResult.frequency === null) {
       this.consecutiveUnpitchedCount++;
-      // If unpitched for 2 or more consecutive frames, clear history
-      if (this.consecutiveUnpitchedCount >= 2) {
+      // If voiced RMS is still present and we have recent pitch history, bridge 1 frame dropout
+      if (
+        this.consecutiveUnpitchedCount === 1 &&
+        this.recentPitches.length >= 2 &&
+        rawResult.rms >= (this.config.silenceThreshold ?? 0.005)
+      ) {
+        const smoothedFreq = computeMedian(this.recentPitches);
+        const noteInfo = getMidiNoteInfo(smoothedFreq);
+        return {
+          ...rawResult,
+          frequency: Math.round(smoothedFreq * 100) / 100,
+          probability: 0.5,
+          isPitched: true,
+          nearestMidi: noteInfo?.midi ?? null,
+          noteName: noteInfo?.noteName ?? null,
+          centsOffNearestMidi: noteInfo?.centsOff ?? 0,
+        };
+      }
+
+      // If unpitched for 3 or more consecutive frames, clear history
+      if (this.consecutiveUnpitchedCount >= 3) {
         this.recentPitches = [];
       }
       return rawResult;
     }
 
     this.consecutiveUnpitchedCount = 0;
-    this.recentPitches.push(rawResult.frequency);
+    let freq = rawResult.frequency;
+
+    // Octave continuity guard:
+    // If we have >= 3 stable pitch frames and the new raw pitch is roughly 2x or 0.5x,
+    // correct octave jump to avoid intermittent overtone flips.
+    if (this.recentPitches.length >= 3) {
+      const historyMedian = computeMedian(this.recentPitches);
+      const ratio = freq / historyMedian;
+      if (ratio >= 1.85 && ratio <= 2.15) {
+        freq = freq / 2; // Correct octave-high harmonic spike
+      } else if (ratio >= 0.45 && ratio <= 0.55 && freq * 2 <= this.config.maxFrequency) {
+        freq = freq * 2; // Correct subharmonic dip
+      }
+    }
+
+    this.recentPitches.push(freq);
 
     // Keep sliding window within configured size
     if (this.recentPitches.length > this.config.medianFilterSize) {

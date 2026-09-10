@@ -18,7 +18,7 @@ import type {
   TimeSignature,
 } from '../../types/song.ts';
 import type { RawNoteSegment } from '../pitch/onsetDetector.ts';
-import { midiToFrequency } from '../pitch/yinDetector.ts';
+import { midiToFrequency } from '../pitch/pitchDetector.ts';
 import {
   KEY_SEMITONES,
   midiToNumberedPitch,
@@ -146,6 +146,8 @@ export interface KeyEventEngineConfig {
   accidentalPreference: 'auto' | 'sharp' | 'flat';
   restThresholdMs: number; // Minimum gap in ms to generate a discrete rest
   extendLegatoGaps: boolean; // Auto-extend notes when gap < restThresholdMs (default: true)
+  filterOneFingerGaps: boolean; // Auto-bridge single-finger transit movement gaps (default: false)
+  oneFingerMaxGapMs: number; // Max gap in ms to bridge for one-finger playing (default: 450ms)
   qwertyMappingMode: QwertyMappingMode; // 'chromatic_piano' or 'movable_solfege'
   minNoteDurationMs: number; // Minimum note duration to keep (default: 25ms)
 }
@@ -160,6 +162,8 @@ export const DEFAULT_KEY_ENGINE_CONFIG: Readonly<KeyEventEngineConfig> = {
   accidentalPreference: 'auto',
   restThresholdMs: 260,
   extendLegatoGaps: true,
+  filterOneFingerGaps: true,
+  oneFingerMaxGapMs: 450,
   qwertyMappingMode: 'chromatic_piano',
   minNoteDurationMs: 25,
 };
@@ -426,30 +430,54 @@ export class KeyEventEngine {
     if (this.activeNote && !this.activeNote.resolved) {
       this.commitActiveNote(now);
     } else {
-      // 2. Inter-Note Rest Gap Detection:
+      // 2. Inter-Note Rest Gap Detection & One-Finger Transit Gap Filtering:
       // If there was a silence gap between previous note release and this note onset:
       if (this.lastNoteReleaseTime !== null) {
         const gapMs = now - this.lastNoteReleaseTime;
 
-        if (gapMs >= this.config.restThresholdMs) {
-          // Intentional rest: generate a discrete Rest Segment
-          const restSegment: RawNoteSegment = {
-            startTimeMs: Math.round(this.lastNoteReleaseTime - this.recordingStartTime),
-            endTimeMs: Math.round(now - this.recordingStartTime),
-            durationMs: Math.round(gapMs),
-            midi: null, // null indicates musical rest
-            frequencyHz: null,
-            avgRms: 0,
-            pitchSamples: [],
-          };
-          this.segments.push(restSegment);
-          this.callbacks.onSegmentCommitted?.(restSegment);
-        } else if (gapMs > 0 && this.config.extendLegatoGaps && this.segments.length > 0) {
-          // Articulation transient (< 80ms): extend previous note for continuous legato line
-          const lastSeg = this.segments[this.segments.length - 1];
-          if (lastSeg && lastSeg.midi !== null) {
-            lastSeg.endTimeMs = Math.round(now - this.recordingStartTime);
-            lastSeg.durationMs = Math.round(lastSeg.endTimeMs - lastSeg.startTimeMs);
+        if (this.config.filterOneFingerGaps) {
+          if (gapMs > 0 && gapMs <= this.config.oneFingerMaxGapMs && this.segments.length > 0) {
+            // One-Finger transit movement: extend previous note across gap to eliminate accidental '0' rest
+            const lastSeg = this.segments[this.segments.length - 1];
+            if (lastSeg && lastSeg.midi !== null) {
+              lastSeg.endTimeMs = Math.round(now - this.recordingStartTime);
+              lastSeg.durationMs = Math.round(lastSeg.endTimeMs - lastSeg.startTimeMs);
+            }
+          } else if (gapMs > this.config.oneFingerMaxGapMs) {
+            // Intentional rest exceeding gap threshold: generate a discrete Rest Segment
+            const restSegment: RawNoteSegment = {
+              startTimeMs: Math.round(this.lastNoteReleaseTime - this.recordingStartTime),
+              endTimeMs: Math.round(now - this.recordingStartTime),
+              durationMs: Math.round(gapMs),
+              midi: null, // null indicates musical rest
+              frequencyHz: null,
+              avgRms: 0,
+              pitchSamples: [],
+            };
+            this.segments.push(restSegment);
+            this.callbacks.onSegmentCommitted?.(restSegment);
+          }
+        } else {
+          if (gapMs >= this.config.restThresholdMs) {
+            // Intentional rest: generate a discrete Rest Segment
+            const restSegment: RawNoteSegment = {
+              startTimeMs: Math.round(this.lastNoteReleaseTime - this.recordingStartTime),
+              endTimeMs: Math.round(now - this.recordingStartTime),
+              durationMs: Math.round(gapMs),
+              midi: null, // null indicates musical rest
+              frequencyHz: null,
+              avgRms: 0,
+              pitchSamples: [],
+            };
+            this.segments.push(restSegment);
+            this.callbacks.onSegmentCommitted?.(restSegment);
+          } else if (gapMs > 0 && this.config.extendLegatoGaps && this.segments.length > 0) {
+            // Articulation transient (< 80ms): extend previous note for continuous legato line
+            const lastSeg = this.segments[this.segments.length - 1];
+            if (lastSeg && lastSeg.midi !== null) {
+              lastSeg.endTimeMs = Math.round(now - this.recordingStartTime);
+              lastSeg.durationMs = Math.round(lastSeg.endTimeMs - lastSeg.startTimeMs);
+            }
           }
         }
       }
@@ -779,6 +807,8 @@ export class KeyEventEngine {
       minDurationMs: options?.minDurationMs ?? this.config.minNoteDurationMs,
       trimSilence: options?.trimSilence ?? true,
       keyboardMode: true,
+      filterOneFingerGaps: options?.filterOneFingerGaps ?? this.config.filterOneFingerGaps,
+      oneFingerMaxGapMs: options?.oneFingerMaxGapMs ?? this.config.oneFingerMaxGapMs,
     });
   }
 

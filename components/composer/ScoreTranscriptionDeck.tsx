@@ -18,14 +18,14 @@ import {
 } from '@/lib/keyboard/keyEventEngine';
 import { useWebMidi } from '@/lib/keyboard/webMidi';
 import {
-  YinDetector,
-  YinDetectorConfig,
+  PitchDetector,
+  PitchDetectorConfig,
   getMidiNoteInfo,
   calculateRms,
   NOTE_NAMES,
   frequencyToCents,
   midiToFrequency,
-} from '@/lib/pitch/yinDetector';
+} from '@/lib/pitch/pitchDetector';
 import {
   NoteSegmenter,
   OnsetDetectorConfig,
@@ -87,7 +87,7 @@ export interface InstrumentPresetConfig {
   icon: string;
   description: string;
   tips: string;
-  yinConfig: Partial<YinDetectorConfig>;
+  pitchConfig: Partial<PitchDetectorConfig>;
   onsetConfig: Partial<OnsetDetectorConfig>;
   filterType: 'highpass' | 'bandpass';
   filterFreq: number;
@@ -102,7 +102,7 @@ export const INSTRUMENT_PRESETS: InstrumentPresetConfig[] = [
     icon: '🎙️',
     description: 'Vocal humming or singing with micro-vibrato smoothing',
     tips: '建議以清脆的「噠 (da)」或「啦 (la)」起音，保持音量穩定',
-    yinConfig: {
+    pitchConfig: {
       threshold: 0.15,
       minFrequency: 75,
       maxFrequency: 1200,
@@ -125,7 +125,7 @@ export const INSTRUMENT_PRESETS: InstrumentPresetConfig[] = [
     icon: '🎋',
     description: 'Acoustic flute with breath turbulence filtering & tonguing attack',
     tips: '帶音頭吐音可獲得最佳音符切分，竹笛高音純淨易辨識',
-    yinConfig: {
+    pitchConfig: {
       threshold: 0.12,
       minFrequency: 280,
       maxFrequency: 2800,
@@ -149,7 +149,7 @@ export const INSTRUMENT_PRESETS: InstrumentPresetConfig[] = [
     icon: '🎻',
     description: 'Bowed strings with harmonic suppression & glissando protection',
     tips: '換弓與清晰換把運指有助精確分音，已抗二次泛音八度跳音',
-    yinConfig: {
+    pitchConfig: {
       threshold: 0.12,
       minFrequency: 65,
       maxFrequency: 1800,
@@ -172,7 +172,7 @@ export const INSTRUMENT_PRESETS: InstrumentPresetConfig[] = [
     icon: '🎸',
     description: 'Plucked single-note acoustic solos with transient attack detection',
     tips: '手指或撥片彈奏清晰單音，每次撥弦皆自動觸發起音偵測',
-    yinConfig: {
+    pitchConfig: {
       threshold: 0.15,
       minFrequency: 80,
       maxFrequency: 1200,
@@ -313,6 +313,8 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
   const [qwertyMappingMode, setQwertyMappingMode] =
     useState<QwertyMappingMode>('chromatic_piano');
   const [allowTriplets, setAllowTriplets] = useState<boolean>(false);
+  const [filterOneFingerGaps, setFilterOneFingerGaps] = useState<boolean>(true);
+  const [oneFingerGapThresholdMs, setOneFingerGapThresholdMs] = useState<number>(450);
   const [activeHeldBeats, setActiveHeldBeats] = useState<number | null>(null);
   const [liveRecordedNotes, setLiveRecordedNotes] = useState<
     Array<{
@@ -346,7 +348,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
   const filterNodeRef = useRef<BiquadFilterNode | null>(null);
   const micGainNodeRef = useRef<GainNode | null>(null);
   const silentGainRef = useRef<GainNode | null>(null);
-  const yinDetectorRef = useRef<YinDetector | null>(null);
+  const pitchDetectorRef = useRef<PitchDetector | null>(null);
   const noteSegmenterRef = useRef<NoteSegmenter | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const practiceCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -376,6 +378,8 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
   const accidentalPrefRef = useRef(accidentalPref);
   const quantizeGridRef = useRef(quantizeGrid);
   const allowTripletsRef = useRef(allowTriplets);
+  const filterOneFingerGapsRef = useRef(filterOneFingerGaps);
+  const oneFingerGapThresholdMsRef = useRef(oneFingerGapThresholdMs);
 
   useEffect(() => {
     audibleClickRef.current = audibleClickDuringRecording;
@@ -388,7 +392,9 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
     accidentalPrefRef.current = accidentalPref;
     quantizeGridRef.current = quantizeGrid;
     allowTripletsRef.current = allowTriplets;
-  }, [activeKey, activeBpm, octaveShiftVal, accidentalPref, quantizeGrid, allowTriplets]);
+    filterOneFingerGapsRef.current = filterOneFingerGaps;
+    oneFingerGapThresholdMsRef.current = oneFingerGapThresholdMs;
+  }, [activeKey, activeBpm, octaveShiftVal, accidentalPref, quantizeGrid, allowTriplets, filterOneFingerGaps, oneFingerGapThresholdMs]);
 
   // Selected preset configuration (for Hum)
   const activePreset = useMemo(() => {
@@ -415,8 +421,8 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
       }
     }
     const effectiveSilenceThreshold = 0.005;
-    if (yinDetectorRef.current) {
-      yinDetectorRef.current.updateConfig({ silenceThreshold: effectiveSilenceThreshold });
+    if (pitchDetectorRef.current) {
+      pitchDetectorRef.current.updateConfig({ silenceThreshold: effectiveSilenceThreshold });
     }
     if (noteSegmenterRef.current) {
       noteSegmenterRef.current.updateConfig({ silenceThresholdRms: effectiveSilenceThreshold });
@@ -505,6 +511,8 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
         accidentalPreference: accidentalPrefRef.current,
         qwertyMappingMode,
         extendLegatoGaps: true,
+        filterOneFingerGaps: filterOneFingerGapsRef.current,
+        oneFingerMaxGapMs: oneFingerGapThresholdMsRef.current,
       },
       {
         onNoteOn: (note: ActiveNoteState) => {
@@ -572,8 +580,21 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
       allowTriplets,
       accidentalPreference: accidentalPref,
       qwertyMappingMode,
+      filterOneFingerGaps,
+      oneFingerMaxGapMs: oneFingerGapThresholdMs,
     });
-  }, [activeKey, activeTimeSignature, activeBpm, octaveShiftVal, quantizeGrid, allowTriplets, accidentalPref, qwertyMappingMode]);
+  }, [
+    activeKey,
+    activeTimeSignature,
+    activeBpm,
+    octaveShiftVal,
+    quantizeGrid,
+    allowTriplets,
+    accidentalPref,
+    qwertyMappingMode,
+    filterOneFingerGaps,
+    oneFingerGapThresholdMs,
+  ]);
 
   // Throttled live held duration ticker during Keyboard recording
   useEffect(() => {
@@ -688,7 +709,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
       audioContextRef.current = null;
     }
 
-    yinDetectorRef.current = null;
+    pitchDetectorRef.current = null;
     noteSegmenterRef.current = null;
     setActiveMidiSet(new Set());
     setActiveHeldBeats(null);
@@ -869,12 +890,12 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
 
       const effectiveSilenceThreshold = 0.005;
 
-      const yin = new YinDetector({
+      const pitchDetector = new PitchDetector({
         sampleRate: ctx.sampleRate,
-        ...activePreset.yinConfig,
+        ...activePreset.pitchConfig,
         silenceThreshold: effectiveSilenceThreshold,
       });
-      yinDetectorRef.current = yin;
+      pitchDetectorRef.current = pitchDetector;
 
       let silenceFrames = 0;
       processor.onaudioprocess = e => {
@@ -882,7 +903,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
         const rms = calculateRms(channelData);
         setCurrentRms(rms);
 
-        const pitchRes = yin.detectSmoothed(channelData);
+        const pitchRes = pitchDetector.detectSmoothed(channelData);
 
         if (pitchRes.isPitched && pitchRes.frequency !== null) {
           silenceFrames = 0;
@@ -1030,12 +1051,12 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
 
         const effectiveSilenceThreshold = 0.005;
 
-        const yin = new YinDetector({
+        const pitchDetector = new PitchDetector({
           sampleRate: ctx.sampleRate,
-          ...activePreset.yinConfig,
+          ...activePreset.pitchConfig,
           silenceThreshold: effectiveSilenceThreshold,
         });
-        yinDetectorRef.current = yin;
+        pitchDetectorRef.current = pitchDetector;
 
         const segmenter = new NoteSegmenter({
           sampleRate: ctx.sampleRate,
@@ -1064,7 +1085,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
           setCurrentRms(rms);
           const timestampMs = performance.now() - recordingStartTimeRef.current;
 
-          const pitchRes = yin.detectSmoothed(channelData);
+          const pitchRes = pitchDetector.detectSmoothed(channelData);
           const isAuditioning = isAuditioningPitchRef.current;
 
           if (pitchRes.isPitched && pitchRes.frequency !== null) {
@@ -1171,6 +1192,8 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
         octaveShift: octaveShiftVal,
         accidentalPreference: accidentalPref,
         autoFillTrailingRests: false,
+        filterOneFingerGaps,
+        oneFingerMaxGapMs: oneFingerGapThresholdMs,
       });
 
       setTranscriptionResult(result);
@@ -1211,6 +1234,8 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
     accidentalPref,
     absorbArticulation,
     scaleMode,
+    filterOneFingerGaps,
+    oneFingerGapThresholdMs,
     stopAllPipelines,
   ]);
 
@@ -1274,6 +1299,8 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
       octaveShift?: number;
       accidentalPreference?: 'auto' | 'sharp' | 'flat';
       allowTriplets?: boolean;
+      filterOneFingerGaps?: boolean;
+      oneFingerMaxGapMs?: number;
     }) => {
       const segs = rawSegments;
       if (segs.length === 0) return;
@@ -1282,6 +1309,8 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
       const newOct = overrides?.octaveShift ?? octaveShiftVal;
       const newAcc = overrides?.accidentalPreference ?? accidentalPref;
       const newTriplets = overrides?.allowTriplets ?? allowTriplets;
+      const newFilterOneFingerGaps = overrides?.filterOneFingerGaps ?? filterOneFingerGaps;
+      const newOneFingerMaxGapMs = overrides?.oneFingerMaxGapMs ?? oneFingerGapThresholdMs;
 
       if (activeMode === 'keyboard') {
         const result = transcribeKeyboardSegmentsToMeasures(segs, {
@@ -1293,6 +1322,8 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
           octaveShift: newOct,
           accidentalPreference: newAcc,
           autoFillTrailingRests: false,
+          filterOneFingerGaps: newFilterOneFingerGaps,
+          oneFingerMaxGapMs: newOneFingerMaxGapMs,
         });
         setTranscriptionResult(result);
         setTranscribedMeasures(result.measures);
@@ -1322,6 +1353,8 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
       octaveShiftVal,
       accidentalPref,
       scaleMode,
+      filterOneFingerGaps,
+      oneFingerGapThresholdMs,
     ]
   );
 
@@ -2090,6 +2123,74 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
                     </button>
                   </div>
                 </div>
+
+                {/* One-Finger Gap Filtering & Threshold Slider */}
+                <div className="flex flex-col gap-2.5 p-3 rounded-xl bg-zinc-100 dark:bg-zinc-800/70 border border-zinc-200 dark:border-zinc-700/80">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex flex-col">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-black text-zinc-800 dark:text-zinc-200">
+                          單指彈奏空隙過濾 (One-Finger Gap Filter)
+                        </span>
+                        <span
+                          className={`text-[10px] font-bold px-1.5 py-0.2 rounded font-mono ${
+                            filterOneFingerGaps
+                              ? 'bg-amber-500/20 text-amber-600 dark:text-amber-300'
+                              : 'bg-zinc-200 dark:bg-zinc-700 text-zinc-500'
+                          }`}
+                        >
+                          {filterOneFingerGaps ? '已開啟 (預設自動填補換音空隙)' : '已關閉 (保留原始彈奏空隙)'}
+                        </span>
+                      </div>
+                      <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                        自動吸收單指換鍵時的抬指空白，延伸前音避免產生零碎的八分休止符 (0)
+                      </span>
+                    </div>
+
+                    <button
+                      id="deck-one-finger-gap-toggle"
+                      type="button"
+                      onClick={() => setFilterOneFingerGaps(!filterOneFingerGaps)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+                        filterOneFingerGaps
+                          ? 'bg-amber-500 hover:bg-amber-400 text-zinc-950 border-amber-500 shadow-xs'
+                          : 'bg-zinc-200 dark:bg-zinc-700 hover:bg-zinc-300 dark:hover:bg-zinc-600 text-zinc-700 dark:text-zinc-300 border-zinc-300 dark:border-zinc-600'
+                      }`}
+                    >
+                      {filterOneFingerGaps ? '開啟 (過濾空隙)' : '關閉 (不作過濾)'}
+                    </button>
+                  </div>
+
+                  {filterOneFingerGaps && (
+                    <div className="flex flex-col gap-1.5 pt-1.5 border-t border-zinc-200 dark:border-zinc-700/60 animate-in fade-in duration-150">
+                      <div className="flex items-center justify-between text-xs font-mono">
+                        <span className="font-bold text-zinc-600 dark:text-zinc-400">
+                          過濾門檻 (Gap Threshold):
+                        </span>
+                        <span className="font-black text-amber-600 dark:text-amber-400">
+                          {oneFingerGapThresholdMs} ms
+                          <span className="text-[11px] font-normal text-zinc-500 ml-1">
+                            (約 {(oneFingerGapThresholdMs / (60000 / activeBpm)).toFixed(2)} 拍)
+                          </span>
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="text-[10px] font-mono text-zinc-400">150ms (快)</span>
+                        <input
+                          id="deck-one-finger-gap-slider"
+                          type="range"
+                          min={150}
+                          max={900}
+                          step={25}
+                          value={oneFingerGapThresholdMs}
+                          onChange={e => setOneFingerGapThresholdMs(Number(e.target.value))}
+                          className="flex-1 accent-amber-500 h-1.5 bg-zinc-300 dark:bg-zinc-700 rounded-lg cursor-pointer"
+                        />
+                        <span className="text-[10px] font-mono text-zinc-400">900ms (慢)</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -2507,33 +2608,79 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
 
             {/* Quick Re-quantize & Fine-Tuning Bar */}
             <div className="flex items-center justify-between p-3.5 rounded-2xl bg-zinc-900 border border-zinc-800 flex-wrap gap-3 text-xs">
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-zinc-400">八度位移:</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next = octaveShiftVal - 1;
-                    setOctaveShiftVal(next);
-                    handleRetranscribe({ octaveShift: next });
-                  }}
-                  className="px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 cursor-pointer"
-                >
-                  -1 八度
-                </button>
-                <span className="font-mono font-bold text-amber-400 px-1">
-                  {octaveShiftVal > 0 ? `+${octaveShiftVal}` : octaveShiftVal}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next = octaveShiftVal + 1;
-                    setOctaveShiftVal(next);
-                    handleRetranscribe({ octaveShift: next });
-                  }}
-                  className="px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 cursor-pointer"
-                >
-                  +1 八度
-                </button>
+              <div className="flex items-center gap-4 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-zinc-400">八度位移:</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = octaveShiftVal - 1;
+                      setOctaveShiftVal(next);
+                      handleRetranscribe({ octaveShift: next });
+                    }}
+                    className="px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 cursor-pointer"
+                  >
+                    -1 八度
+                  </button>
+                  <span className="font-mono font-bold text-amber-400 px-1">
+                    {octaveShiftVal > 0 ? `+${octaveShiftVal}` : octaveShiftVal}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = octaveShiftVal + 1;
+                      setOctaveShiftVal(next);
+                      handleRetranscribe({ octaveShift: next });
+                    }}
+                    className="px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 cursor-pointer"
+                  >
+                    +1 八度
+                  </button>
+                </div>
+
+                {activeMode === 'keyboard' && (
+                  <div className="flex items-center gap-2 sm:border-l sm:border-zinc-800 sm:pl-4 flex-wrap">
+                    <span className="font-bold text-zinc-400">單指空隙過濾:</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = !filterOneFingerGaps;
+                        setFilterOneFingerGaps(next);
+                        handleRetranscribe({ filterOneFingerGaps: next });
+                      }}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
+                        filterOneFingerGaps
+                          ? 'bg-amber-500 text-zinc-950 border-amber-500 font-black'
+                          : 'bg-zinc-800 text-zinc-400 border-zinc-700 hover:text-zinc-200'
+                      }`}
+                    >
+                      {filterOneFingerGaps ? '已開啟' : '已關閉'}
+                    </button>
+
+                    {filterOneFingerGaps && (
+                      <div className="flex items-center gap-1.5 ml-1">
+                        <span className="text-zinc-400 font-mono text-[11px]">門檻:</span>
+                        <input
+                          type="range"
+                          min={150}
+                          max={900}
+                          step={25}
+                          value={oneFingerGapThresholdMs}
+                          onChange={e => {
+                            const val = Number(e.target.value);
+                            setOneFingerGapThresholdMs(val);
+                            handleRetranscribe({ filterOneFingerGaps: true, oneFingerMaxGapMs: val });
+                          }}
+                          className="w-20 accent-amber-500 h-1 bg-zinc-700 rounded-lg cursor-pointer"
+                          title={`過濾門檻: ${oneFingerGapThresholdMs}ms`}
+                        />
+                        <span className="font-mono text-amber-400 text-[11px] font-bold">
+                          {oneFingerGapThresholdMs}ms
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center gap-2">

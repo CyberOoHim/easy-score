@@ -1067,5 +1067,70 @@ describe('Stage 5: 3-Beat Countdown & Key Press Duration to Beat Length Mapping'
     assert.equal(resultWhole.notes[0].pitch, 5);
     assert.equal(resultWhole.notes[0].duration, 4); // 4 beats!
   });
+
+  it('accurately transcribes continuous keyboard input of 2.5, 3.5, and 5.0 beats without clipping', () => {
+    const clock = new VirtualClock();
+    const engine = new KeyEventEngine(
+      { keySignature: 'C', bpm: 80, timeSignature: '4/4' },
+      undefined,
+      clock.now
+    );
+
+    // 1. Hold for 2.5 beats (1875ms at 80 BPM)
+    engine.startRecording(clock.now());
+    engine.noteOn(60, 0.85, clock.now());
+    clock.advance(1875);
+    engine.noteOff(60, clock.now());
+
+    const res2p5 = engine.transcribe({
+      key: 'C',
+      bpm: 80,
+      grid: 'eighth',
+    });
+    assert.equal(res2p5.notes.length, 1);
+    assert.equal(res2p5.notes[0].pitch, 1);
+    assert.equal(res2p5.notes[0].duration, 2.5, 'Should preserve exact 2.5 beat duration');
+
+    // 2. Hold for 3.5 beats (2625ms at 80 BPM)
+    engine.clearSegments();
+    engine.startRecording(clock.now());
+    engine.noteOn(64, 0.85, clock.now());
+    clock.advance(2625);
+    engine.noteOff(64, clock.now());
+
+    const res3p5 = engine.transcribe({
+      key: 'C',
+      bpm: 80,
+      grid: 'eighth',
+    });
+    assert.equal(res3p5.notes.length, 1);
+    assert.equal(res3p5.notes[0].pitch, 3);
+    assert.equal(res3p5.notes[0].duration, 3.5, 'Should preserve exact 3.5 beat duration');
+
+    // 3. Hold for 5.0 continuous beats across measure boundary (3750ms at 80 BPM in 4/4)
+    engine.clearSegments();
+    engine.startRecording(clock.now());
+    engine.noteOn(67, 0.85, clock.now());
+    clock.advance(3750);
+    engine.noteOff(67, clock.now());
+
+    const res5p0 = engine.transcribe({
+      key: 'C',
+      timeSignature: '4/4',
+      bpm: 80,
+      grid: 'eighth',
+    });
+    // Should split across 2 measures: Measure 1 has 4 beats (tied), Measure 2 has 1 beat
+    assert.equal(res5p0.measures.length, 2, 'Should span 2 measures');
+    assert.equal(res5p0.measures[0].notes.length, 1);
+    assert.equal(res5p0.measures[0].notes[0].pitch, 5);
+    assert.equal(res5p0.measures[0].notes[0].duration, 4);
+    assert.equal(res5p0.measures[0].notes[0].tieToNext, true, 'First piece tied to next');
+
+    assert.equal(res5p0.measures[1].notes.length, 1);
+    assert.equal(res5p0.measures[1].notes[0].pitch, 5);
+    assert.equal(res5p0.measures[1].notes[0].duration, 1);
+    assert.equal(res5p0.measures[1].notes[0].tieToNext, false);
+  });
 });
 

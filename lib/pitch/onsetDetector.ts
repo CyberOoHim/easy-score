@@ -30,7 +30,7 @@ export const DEFAULT_ONSET_CONFIG: Readonly<OnsetDetectorConfig> = {
   spectralFluxThreshold: 0.08,
   refractoryPeriodMs: 70,
   pitchStabilityCents: 35,
-  legatoPitchThresholdCents: 75,
+  legatoPitchThresholdCents: 110,
   minNoteDurationMs: 60,
 };
 
@@ -250,11 +250,18 @@ export class OnsetDetector {
     const canTriggerOnset = timeSinceLastOnset >= refractoryPeriodMs;
 
     // 5. Transient attack check
-    const isEnergySurge = rmsDelta >= attackRmsDeltaThreshold && (
+    // If we are already sustaining a voiced note on a continuous pitch, require a distinct re-attack
+    // rather than natural breath/vocal fluctuations to avoid false splits.
+    const isAlreadyVoicedSustaining = (this.currentState === 'SUSTAIN' || this.currentState === 'ATTACK') && !isSilent;
+    const effectiveRmsDeltaThreshold = isAlreadyVoicedSustaining ? attackRmsDeltaThreshold * 2.0 : attackRmsDeltaThreshold;
+    const effectiveRiseThreshold = isAlreadyVoicedSustaining ? attackRelativeRiseThreshold * 1.4 : attackRelativeRiseThreshold;
+    const effectiveSpectralFluxThreshold = isAlreadyVoicedSustaining ? spectralFluxThreshold * 1.6 : spectralFluxThreshold;
+
+    const isEnergySurge = rmsDelta >= effectiveRmsDeltaThreshold && (
       this.previousRms <= 0.001 ||
-      (rms / Math.max(0.001, this.previousRms)) >= attackRelativeRiseThreshold
+      (rms / Math.max(0.001, this.previousRms)) >= effectiveRiseThreshold
     );
-    const isSpectralSurge = spectralFlux >= spectralFluxThreshold;
+    const isSpectralSurge = spectralFlux >= effectiveSpectralFluxThreshold;
 
     let isOnset = false;
     let isLegatoChange = false;
