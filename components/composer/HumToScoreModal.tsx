@@ -398,6 +398,7 @@ export const HumToScoreModal: React.FC<HumToScoreModalProps> = ({
         mediaRecorderRef.current.stop();
       } catch {}
     }
+    mediaRecorderRef.current = null;
 
     // Disconnect ScriptProcessor and Filter
     if (scriptProcessorRef.current) {
@@ -424,6 +425,12 @@ export const HumToScoreModal: React.FC<HumToScoreModalProps> = ({
       } catch {}
       silentGainRef.current = null;
     }
+    if (analyserRef.current) {
+      try {
+        analyserRef.current.disconnect();
+      } catch {}
+      analyserRef.current = null;
+    }
 
     // Stop media stream tracks
     if (mediaStreamRef.current) {
@@ -439,6 +446,9 @@ export const HumToScoreModal: React.FC<HumToScoreModalProps> = ({
       audioContextRef.current = null;
     }
 
+    yinDetectorRef.current = null;
+    noteSegmenterRef.current = null;
+
     // Stop mic preview audio playback
     if (micAudioElementRef.current) {
       micAudioElementRef.current.pause();
@@ -453,14 +463,27 @@ export const HumToScoreModal: React.FC<HumToScoreModalProps> = ({
     setIsSynthPlaying(false);
   }, [audioEngine]);
 
+  const recordedAudioUrlRef = useRef<string | null>(null);
+  useEffect(() => {
+    recordedAudioUrlRef.current = recordedAudioUrl;
+  }, [recordedAudioUrl]);
+
+  const stopAllAudioPipelinesRef = useRef(stopAllAudioPipelines);
+  useEffect(() => {
+    stopAllAudioPipelinesRef.current = stopAllAudioPipelines;
+  }, [stopAllAudioPipelines]);
+
+  // Clean up all resources strictly when modal unmounts
   useEffect(() => {
     return () => {
-      stopAllAudioPipelines();
-      if (recordedAudioUrl) {
-        URL.revokeObjectURL(recordedAudioUrl);
+      stopAllAudioPipelinesRef.current();
+      if (recordedAudioUrlRef.current) {
+        try {
+          URL.revokeObjectURL(recordedAudioUrlRef.current);
+        } catch {}
       }
     };
-  }, [stopAllAudioPipelines, recordedAudioUrl]);
+  }, []);
 
   // Subscribe to AudioEngine state for synth playback tracking
   useEffect(() => {
@@ -514,289 +537,316 @@ export const HumToScoreModal: React.FC<HumToScoreModalProps> = ({
     render();
   }, []);
 
+  // Ensure canvas visualizer starts as soon as recording step mounts
+  useEffect(() => {
+    if (step === 'RECORDING') {
+      startCanvasVisualizer();
+    }
+  }, [step, startCanvasVisualizer]);
+
   // Run the core recording stream pipeline
   const startRecordingStream = useCallback(async () => {
     setAudioError(null);
     recordedChunksRef.current = [];
     isStartingStreamRef.current = true;
 
-    if (recordedAudioUrl) {
-      URL.revokeObjectURL(recordedAudioUrl);
-      setRecordedAudioUrl(null);
-    }
-
-    // 1. Request microphone access
-    let stream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: false,
-          autoGainControl: false,
-          noiseSuppression: false,
-        },
-      });
-    } catch {
+      if (recordedAudioUrl) {
+        try {
+          URL.revokeObjectURL(recordedAudioUrl);
+        } catch {}
+        setRecordedAudioUrl(null);
+      }
+
+      // 1. Request microphone access
+      let stream: MediaStream;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      } catch (err: unknown) {
-        isStartingStreamRef.current = false;
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        setAudioError(`Microphone access failed: ${errorMsg}. Please allow microphone permission in your browser.`);
-        setStep('SETUP');
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: false,
+            autoGainControl: false,
+            noiseSuppression: false,
+          },
+        });
+      } catch {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch (err: unknown) {
+          isStartingStreamRef.current = false;
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          setAudioError(`Microphone access failed: ${errorMsg}. Please allow microphone permission in your browser.`);
+          setStep('SETUP');
+          return;
+        }
+      }
+
+      // Abort guard: if modal was closed while permission was pending, release stream and abort
+      if (!isStartingStreamRef.current) {
+        stream.getTracks().forEach(track => track.stop());
         return;
       }
-    }
 
-    // Abort guard: if modal was closed while permission was pending, release stream and abort
-    if (!isStartingStreamRef.current) {
-      stream.getTracks().forEach(track => track.stop());
-      return;
-    }
+      mediaStreamRef.current = stream;
 
-    mediaStreamRef.current = stream;
+      // 2. Setup Web Audio context & signal processing graph
+      const AudioContextClass =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const audioCtx = new AudioContextClass();
+      audioContextRef.current = audioCtx;
 
-    // 2. Setup Web Audio context & signal processing graph
-    const AudioContextClass =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    const audioCtx = new AudioContextClass();
-    audioContextRef.current = audioCtx;
-
-    if (audioCtx.state === 'suspended') {
-      await audioCtx.resume();
-    }
-
-    // Secondary abort guard after potential resume delay
-    if (!isStartingStreamRef.current) {
-      stream.getTracks().forEach(track => track.stop());
-      try { audioCtx.close(); } catch {}
-      return;
-    }
-
-    const sourceNode = audioCtx.createMediaStreamSource(stream);
-
-    // High-Gain Microphone Input Amplifier (Large gain range 1x ~ 30x for iPad / quiet microphones)
-    const micGainNode = audioCtx.createGain();
-    micGainNode.gain.setValueAtTime(micGain, audioCtx.currentTime);
-    micGainNodeRef.current = micGainNode;
-
-    // Filter Node based on instrument preset
-    const filterNode = audioCtx.createBiquadFilter();
-    filterNode.type = activePreset.filterType;
-    filterNode.frequency.setValueAtTime(activePreset.filterFreq, audioCtx.currentTime);
-    if (activePreset.filterQ) {
-      filterNode.Q.setValueAtTime(activePreset.filterQ, audioCtx.currentTime);
-    }
-    filterNodeRef.current = filterNode;
-
-    // Analyser Node for live visualizer
-    const analyserNode = audioCtx.createAnalyser();
-    analyserNode.fftSize = 1024;
-    analyserRef.current = analyserNode;
-
-    // ScriptProcessorNode for real-time sample processing (2048 buffer size ~46ms at 44.1kHz)
-    const scriptProcessor = audioCtx.createScriptProcessor(2048, 1, 1);
-    scriptProcessorRef.current = scriptProcessor;
-
-    // Silent Gain Node: prevents acoustic feedback into speakers
-    const silentGain = audioCtx.createGain();
-    silentGain.gain.setValueAtTime(0, audioCtx.currentTime);
-    silentGainRef.current = silentGain;
-
-    // Connect audio processing graph:
-    // sourceNode -> micGainNode -> filterNode -> analyserNode -> scriptProcessor -> silentGain -> destination
-    sourceNode.connect(micGainNode);
-    micGainNode.connect(filterNode);
-    filterNode.connect(analyserNode);
-    analyserNode.connect(scriptProcessor);
-    scriptProcessor.connect(silentGain);
-    silentGain.connect(audioCtx.destination);
-
-    // 3. Setup MediaRecorder for dual-track playback (records amplified stream when supported)
-    try {
-      let recStream: MediaStream = stream;
-      try {
-        if (typeof audioCtx.createMediaStreamDestination === 'function') {
-          const recDest = audioCtx.createMediaStreamDestination();
-          micGainNode.connect(recDest);
-          if (recDest.stream && recDest.stream.getAudioTracks().length > 0) {
-            recStream = recDest.stream;
-          }
+      if (audioCtx.state === 'suspended') {
+        try {
+          await Promise.race([
+            audioCtx.resume(),
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error('AudioContext resume timeout')), 1500)
+            ),
+          ]);
+        } catch (resumeErr) {
+          console.warn('[HumToScore] AudioContext resume note:', resumeErr);
         }
-      } catch {
-        recStream = stream;
       }
 
-      const mimeTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
-      const supportedMime = mimeTypes.find(m => MediaRecorder.isTypeSupported(m)) || '';
-      const recorder = new MediaRecorder(recStream, supportedMime ? { mimeType: supportedMime } : undefined);
+      // Secondary abort guard after potential resume delay
+      if (!isStartingStreamRef.current) {
+        stream.getTracks().forEach(track => track.stop());
+        try { audioCtx.close(); } catch {}
+        return;
+      }
 
-      recorder.ondataavailable = e => {
-        if (e.data && e.data.size > 0) {
-          recordedChunksRef.current.push(e.data);
+      const sourceNode = audioCtx.createMediaStreamSource(stream);
+
+      // High-Gain Microphone Input Amplifier (Large gain range 1x ~ 30x for iPad / quiet microphones)
+      const micGainNode = audioCtx.createGain();
+      micGainNode.gain.setValueAtTime(micGain, audioCtx.currentTime);
+      micGainNodeRef.current = micGainNode;
+
+      // Filter Node based on instrument preset
+      const filterNode = audioCtx.createBiquadFilter();
+      filterNode.type = activePreset.filterType;
+      filterNode.frequency.setValueAtTime(activePreset.filterFreq, audioCtx.currentTime);
+      if (activePreset.filterQ) {
+        filterNode.Q.setValueAtTime(activePreset.filterQ, audioCtx.currentTime);
+      }
+      filterNodeRef.current = filterNode;
+
+      // Analyser Node for live visualizer
+      const analyserNode = audioCtx.createAnalyser();
+      analyserNode.fftSize = 1024;
+      analyserRef.current = analyserNode;
+
+      // ScriptProcessorNode for real-time sample processing (2048 buffer size ~46ms at 44.1kHz)
+      const scriptProcessor = audioCtx.createScriptProcessor(2048, 1, 1);
+      scriptProcessorRef.current = scriptProcessor;
+
+      // Silent Gain Node: prevents acoustic feedback into speakers
+      const silentGain = audioCtx.createGain();
+      silentGain.gain.setValueAtTime(0, audioCtx.currentTime);
+      silentGainRef.current = silentGain;
+
+      // Connect audio processing graph:
+      // sourceNode -> micGainNode -> filterNode -> analyserNode -> scriptProcessor -> silentGain -> destination
+      sourceNode.connect(micGainNode);
+      micGainNode.connect(filterNode);
+      filterNode.connect(analyserNode);
+      analyserNode.connect(scriptProcessor);
+      scriptProcessor.connect(silentGain);
+      silentGain.connect(audioCtx.destination);
+
+      // 3. Setup MediaRecorder for dual-track playback (records amplified stream when supported)
+      try {
+        let recStream: MediaStream = stream;
+        try {
+          if (typeof audioCtx.createMediaStreamDestination === 'function') {
+            const recDest = audioCtx.createMediaStreamDestination();
+            micGainNode.connect(recDest);
+            if (recDest.stream && recDest.stream.getAudioTracks().length > 0) {
+              recStream = recDest.stream;
+            }
+          }
+        } catch {
+          recStream = stream;
         }
-      };
 
-      recorder.onstop = () => {
-        const blob = new Blob(recordedChunksRef.current, {
-          type: recorder.mimeType || 'audio/webm',
-        });
-        const url = URL.createObjectURL(blob);
-        setRecordedAudioUrl(url);
-      };
+        const mimeTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
+        const supportedMime = mimeTypes.find(m => MediaRecorder.isTypeSupported(m)) || '';
+        const recorder = new MediaRecorder(recStream, supportedMime ? { mimeType: supportedMime } : undefined);
 
-      recorder.start(100);
-      mediaRecorderRef.current = recorder;
-    } catch (err) {
-      console.warn('[HumToScore] MediaRecorder init failed, continuing pitch detection:', err);
-    }
+        recorder.ondataavailable = e => {
+          if (e.data && e.data.size > 0) {
+            recordedChunksRef.current.push(e.data);
+          }
+        };
 
-    // 4. Initialize YIN and Onset detectors with preset configuration and gain-scaled silence gate
-    const baseSilenceThreshold = activePreset.yinConfig.silenceThreshold ?? 0.008;
-    const effectiveSilenceThreshold =
-      baseSilenceThreshold * Math.min(4.5, Math.max(1.0, 1.0 + (micGain - 1.0) * 0.25));
+        recorder.onstop = () => {
+          const blob = new Blob(recordedChunksRef.current, {
+            type: recorder.mimeType || 'audio/webm',
+          });
+          const url = URL.createObjectURL(blob);
+          setRecordedAudioUrl(url);
+        };
 
-    const yin = new YinDetector({
-      sampleRate: audioCtx.sampleRate,
-      ...activePreset.yinConfig,
-      silenceThreshold: effectiveSilenceThreshold,
-    });
-    yinDetectorRef.current = yin;
+        recorder.start(100);
+        mediaRecorderRef.current = recorder;
+      } catch (err) {
+        console.warn('[HumToScore] MediaRecorder init failed, continuing pitch detection:', err);
+      }
 
-    const segmenter = new NoteSegmenter({
-      sampleRate: audioCtx.sampleRate,
-      ...activePreset.onsetConfig,
-      silenceThresholdRms: effectiveSilenceThreshold,
-    });
-    noteSegmenterRef.current = segmenter;
+      // 4. Initialize YIN and Onset detectors with preset configuration and gain-scaled silence gate
+      const baseSilenceThreshold = activePreset.yinConfig.silenceThreshold ?? 0.008;
+      const effectiveSilenceThreshold =
+        baseSilenceThreshold * Math.min(4.5, Math.max(1.0, 1.0 + (micGain - 1.0) * 0.25));
 
-    recordingStartTimeRef.current = performance.now();
-    setRecordingSeconds(0);
-    setLiveTranscribedNotes([]);
-    setStep('RECORDING');
-    void wakeLockManager.request();
+      const yin = new YinDetector({
+        sampleRate: audioCtx.sampleRate,
+        ...activePreset.yinConfig,
+        silenceThreshold: effectiveSilenceThreshold,
+      });
+      yinDetectorRef.current = yin;
 
-    // Start live visualizer
-    startCanvasVisualizer();
+      const segmenter = new NoteSegmenter({
+        sampleRate: audioCtx.sampleRate,
+        ...activePreset.onsetConfig,
+        silenceThresholdRms: effectiveSilenceThreshold,
+      });
+      noteSegmenterRef.current = segmenter;
 
-    // Elapsed time ticker
-    timerIntervalRef.current = setInterval(() => {
-      const elapsedSec = (performance.now() - recordingStartTimeRef.current) / 1000;
-      setRecordingSeconds(Math.round(elapsedSec * 10) / 10);
-    }, 100);
+      recordingStartTimeRef.current = performance.now();
+      setRecordingSeconds(0);
+      setLiveTranscribedNotes([]);
+      setStep('RECORDING');
+      void wakeLockManager.request();
 
-    // Visual & optional audible metronome guide click during recording (visual indication ALWAYS active)
-    const beatsPerBar = parseInt(activeTimeSignature.split('/')[0], 10) || 4;
-    const secPerBeat = 60 / activeBpm;
-    let beatCounter = 0;
+      // Start live visualizer
+      startCanvasVisualizer();
 
-    // Trigger beat 1 immediately upon start
-    setCurrentBeatInBar(1);
-    setIsBeatPulse(true);
-    setIsDownbeatFlash(true);
-    if (audibleClickRef.current) {
-      audioEngine.playMetronomeTick(true);
-    }
-    if (metronomePulseTimeoutRef.current) clearTimeout(metronomePulseTimeoutRef.current);
-    metronomePulseTimeoutRef.current = setTimeout(() => {
-      setIsBeatPulse(false);
-      setIsDownbeatFlash(false);
-      metronomePulseTimeoutRef.current = null;
-    }, 140);
-    beatCounter = 1;
+      // Elapsed time ticker
+      timerIntervalRef.current = setInterval(() => {
+        const elapsedSec = (performance.now() - recordingStartTimeRef.current) / 1000;
+        setRecordingSeconds(Math.round(elapsedSec * 10) / 10);
+      }, 100);
 
-    metronomeClickIntervalRef.current = setInterval(() => {
-      const beatIndex = (beatCounter % beatsPerBar) + 1;
-      const isDownbeat = (beatCounter % beatsPerBar) === 0;
+      // Visual & optional audible metronome guide click during recording (visual indication ALWAYS active)
+      const beatsPerBar = parseInt(activeTimeSignature.split('/')[0], 10) || 4;
+      const secPerBeat = 60 / activeBpm;
+      let beatCounter = 0;
 
-      setCurrentBeatInBar(beatIndex);
+      // Trigger beat 1 immediately upon start
+      setCurrentBeatInBar(1);
       setIsBeatPulse(true);
-      setIsDownbeatFlash(isDownbeat);
-
+      setIsDownbeatFlash(true);
+      if (audibleClickRef.current) {
+        audioEngine.playMetronomeTick(true);
+      }
       if (metronomePulseTimeoutRef.current) clearTimeout(metronomePulseTimeoutRef.current);
       metronomePulseTimeoutRef.current = setTimeout(() => {
         setIsBeatPulse(false);
         setIsDownbeatFlash(false);
         metronomePulseTimeoutRef.current = null;
       }, 140);
+      beatCounter = 1;
 
-      if (audibleClickRef.current) {
-        audioEngine.playMetronomeTick(isDownbeat);
-      }
-      beatCounter++;
-    }, secPerBeat * 1000);
+      metronomeClickIntervalRef.current = setInterval(() => {
+        const beatIndex = (beatCounter % beatsPerBar) + 1;
+        const isDownbeat = (beatCounter % beatsPerBar) === 0;
 
-    // 5. Audio Process Handler (continuous stream analysis with throttled UI telemetry)
-    scriptProcessor.onaudioprocess = e => {
-      const channelData = e.inputBuffer.getChannelData(0);
-      const rms = calculateRms(channelData);
-      const timestampMs = performance.now() - recordingStartTimeRef.current;
+        setCurrentBeatInBar(beatIndex);
+        setIsBeatPulse(true);
+        setIsDownbeatFlash(isDownbeat);
 
-      const pitchRes = yin.detectSmoothed(channelData);
+        if (metronomePulseTimeoutRef.current) clearTimeout(metronomePulseTimeoutRef.current);
+        metronomePulseTimeoutRef.current = setTimeout(() => {
+          setIsBeatPulse(false);
+          setIsDownbeatFlash(false);
+          metronomePulseTimeoutRef.current = null;
+        }, 140);
 
-      // Throttled UI telemetry to avoid React render storm (~10 Hz max)
-      const now = performance.now();
-      if (now - lastTelemetryTimeRef.current >= 80) {
-        lastTelemetryTimeRef.current = now;
-        setCurrentRms(rms);
-        setIsVoiced(pitchRes.isPitched);
-
-        if (pitchRes.isPitched && pitchRes.frequency !== null) {
-          setCurrentPitchHz(pitchRes.frequency);
-          setCurrentMidi(pitchRes.nearestMidi);
-          setCurrentCents(pitchRes.centsOffNearestMidi);
-        } else {
-          setCurrentPitchHz(null);
-          setCurrentMidi(null);
-          setCurrentCents(0);
+        if (audibleClickRef.current) {
+          audioEngine.playMetronomeTick(isDownbeat);
         }
-      }
+        beatCounter++;
+      }, secPerBeat * 1000);
 
-      // Feed frame to Onset / Segmenter engine with confidence probability
-      const finishedSeg = segmenter.ingestFrame(
-        channelData,
-        timestampMs,
-        pitchRes.isPitched ? pitchRes.frequency : null,
-        pitchRes.probability
-      );
+      // 5. Audio Process Handler (continuous stream analysis with throttled UI telemetry)
+      scriptProcessor.onaudioprocess = e => {
+        const channelData = e.inputBuffer.getChannelData(0);
+        const rms = calculateRms(channelData);
+        const timestampMs = performance.now() - recordingStartTimeRef.current;
 
-      // If a note segment finished, update live rolling notes preview
-      if (finishedSeg) {
-        const segs = segmenter.getSegments();
-        const cleaned = cleanRawSegments(segs, 50, true, absorbArticulation, activeBpm);
-        const liveNotes: NumberedNotationNote[] = cleaned.slice(-8).map((s, idx) => {
-          if (s.midi !== null) {
-            const pitchInfo = s.frequencyHz
-              ? frequencyToNumberedPitch(s.frequencyHz, activeKey, {
-                  accidentalPreference: accidentalPref,
-                  octaveShift: octaveShiftVal,
-                  scaleMode,
-                })
-              : midiToNumberedPitch(s.midi, activeKey, {
-                  accidentalPreference: accidentalPref,
-                  octaveShift: octaveShiftVal,
-                  scaleMode,
-                });
+        const pitchRes = yin.detectSmoothed(channelData);
+
+        // Throttled UI telemetry to avoid React render storm (~10 Hz max)
+        const now = performance.now();
+        if (now - lastTelemetryTimeRef.current >= 80) {
+          lastTelemetryTimeRef.current = now;
+          setCurrentRms(rms);
+          setIsVoiced(pitchRes.isPitched);
+
+          if (pitchRes.isPitched && pitchRes.frequency !== null) {
+            setCurrentPitchHz(pitchRes.frequency);
+            setCurrentMidi(pitchRes.nearestMidi);
+            setCurrentCents(pitchRes.centsOffNearestMidi);
+          } else {
+            setCurrentPitchHz(null);
+            setCurrentMidi(null);
+            setCurrentCents(0);
+          }
+        }
+
+        // Feed frame to Onset / Segmenter engine with confidence probability
+        const finishedSeg = segmenter.ingestFrame(
+          channelData,
+          timestampMs,
+          pitchRes.isPitched ? pitchRes.frequency : null,
+          pitchRes.probability
+        );
+
+        // If a note segment finished, update live rolling notes preview
+        if (finishedSeg) {
+          const segs = segmenter.getSegments();
+          const cleaned = cleanRawSegments(segs, 50, true, absorbArticulation, activeBpm);
+          const liveNotes: NumberedNotationNote[] = cleaned.slice(-8).map((s, idx) => {
+            if (s.midi !== null) {
+              const pitchInfo = s.frequencyHz
+                ? frequencyToNumberedPitch(s.frequencyHz, activeKey, {
+                    accidentalPreference: accidentalPref,
+                    octaveShift: octaveShiftVal,
+                    scaleMode,
+                  })
+                : midiToNumberedPitch(s.midi, activeKey, {
+                    accidentalPreference: accidentalPref,
+                    octaveShift: octaveShiftVal,
+                    scaleMode,
+                  });
+              return {
+                id: `live-note-${idx}`,
+                pitch: pitchInfo.pitch,
+                octave: pitchInfo.octave,
+                accidental: pitchInfo.accidental,
+                duration: 1,
+                lyric: {},
+              };
+            }
             return {
-              id: `live-note-${idx}`,
-              pitch: pitchInfo.pitch,
-              octave: pitchInfo.octave,
-              accidental: pitchInfo.accidental,
+              id: `live-note-rest-${idx}`,
+              pitch: 0,
+              octave: 0,
               duration: 1,
               lyric: {},
             };
-          }
-          return {
-            id: `live-note-rest-${idx}`,
-            pitch: 0,
-            octave: 0,
-            duration: 1,
-            lyric: {},
-          };
-        });
-        setLiveTranscribedNotes(liveNotes);
-      }
-    };
+          });
+          setLiveTranscribedNotes(liveNotes);
+        }
+      };
+    } catch (err: unknown) {
+      console.error('[HumToScore] startRecordingStream error:', err);
+      isStartingStreamRef.current = false;
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      setAudioError(`錄音啟動失敗 (${errorMsg})，請重試或檢查麥克風權限`);
+      stopAllAudioPipelines();
+      setStep('SETUP');
+    }
   }, [
     activePreset,
     activeKey,
@@ -810,10 +860,16 @@ export const HumToScoreModal: React.FC<HumToScoreModalProps> = ({
     recordedAudioUrl,
     scaleMode,
     absorbArticulation,
+    stopAllAudioPipelines,
   ]);
 
   // Start Count-in Lead-in or go straight to recording
   const handleInitiateRecording = useCallback(() => {
+    if (countInIntervalRef.current) {
+      clearInterval(countInIntervalRef.current);
+      countInIntervalRef.current = null;
+    }
+
     if (!enableCountIn) {
       void startRecordingStream();
       return;
@@ -841,6 +897,25 @@ export const HumToScoreModal: React.FC<HumToScoreModalProps> = ({
       }
     }, secPerBeat * 1000);
   }, [enableCountIn, activeBpm, audioEngine, startRecordingStream]);
+
+  // Clean retake handler that clears audio recording and returns to setup
+  const handleRetake = useCallback(() => {
+    stopAllAudioPipelines();
+    if (recordedAudioUrl) {
+      try {
+        URL.revokeObjectURL(recordedAudioUrl);
+      } catch {}
+      setRecordedAudioUrl(null);
+    }
+    setTranscribedMeasures([]);
+    setRawSegments([]);
+    setAccuracyCents(0);
+    setRecordingSeconds(0);
+    setLiveTranscribedNotes([]);
+    setAudioError(null);
+    setCountdownBeat(3);
+    setStep('SETUP');
+  }, [stopAllAudioPipelines, recordedAudioUrl]);
 
   // Stop Recording & Run Final Transcription
   const handleStopRecording = useCallback(() => {
@@ -1537,7 +1612,10 @@ export const HumToScoreModal: React.FC<HumToScoreModalProps> = ({
               </p>
               <button
                 type="button"
-                onClick={stopAllAudioPipelines}
+                onClick={() => {
+                  stopAllAudioPipelines();
+                  setStep('SETUP');
+                }}
                 className="px-4 py-2 text-xs font-bold text-zinc-400 hover:text-zinc-200 cursor-pointer"
               >
                 取消 (Cancel)
@@ -1861,10 +1939,7 @@ export const HumToScoreModal: React.FC<HumToScoreModalProps> = ({
                 <button
                   id="hum-retake-btn"
                   type="button"
-                  onClick={() => {
-                    stopAllAudioPipelines();
-                    setStep('SETUP');
-                  }}
+                  onClick={handleRetake}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 text-xs font-bold rounded-xl transition-colors cursor-pointer"
                 >
                   <RotateCcw className="w-3.5 h-3.5 text-amber-500" />
