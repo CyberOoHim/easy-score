@@ -73,9 +73,18 @@ import {
   Delete,
   Headphones,
   Target,
+  Upload,
+  FileAudio,
+  UploadCloud,
+  AlertCircle,
+  RefreshCw,
 } from 'lucide-react';
+import {
+  transcribeAudioFile,
+  type AudioFileTranscriptionResult,
+} from '@/lib/pitch/audioFileTranscriber';
 
-export type StudioTranscriptionMode = 'hum' | 'keyboard';
+export type StudioTranscriptionMode = 'hum' | 'upload' | 'keyboard';
 export type DeckStep = 'SETUP' | 'COUNTING_IN' | 'RECORDING' | 'REVIEW';
 export type InsertionMode = 'cursor' | 'append' | 'replace';
 
@@ -343,6 +352,24 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
       solfege: string;
     }>
   >([]);
+
+  // =========================================================================
+  // AUDIO FILE UPLOAD & TRANSCRIPTION STATES
+  // =========================================================================
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [uploadedFileSize, setUploadedFileSize] = useState<number | null>(null);
+  const [uploadedAudioDuration, setUploadedAudioDuration] = useState<number | null>(null);
+  const [uploadedWaveformPeaks, setUploadedWaveformPeaks] = useState<number[]>([]);
+  const [isTranscribingFile, setIsTranscribingFile] = useState<boolean>(false);
+  const [transcribeProgress, setTranscribeProgress] = useState<number>(0);
+  const [transcribeStatusText, setTranscribeStatusText] = useState<string>('');
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [isDraggingFile, setIsDraggingFile] = useState<boolean>(false);
+  const [previewAudioUrl, setPreviewAudioUrl] = useState<string | null>(null);
+  const [isPreviewAudioPlaying, setIsPreviewAudioPlaying] = useState<boolean>(false);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // =========================================================================
   // REVIEW & OUTPUT STATES
@@ -685,6 +712,14 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
         micAudioElementRef.current.currentTime = 0;
       } catch {}
     }
+
+    if (previewAudioRef.current) {
+      try {
+        previewAudioRef.current.pause();
+        previewAudioRef.current.currentTime = 0;
+      } catch {}
+    }
+    setIsPreviewAudioPlaying(false);
 
     audioEngine.stop();
 
@@ -1372,6 +1407,209 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
     [activeMode]
   );
 
+  // Format bytes to human readable text
+  const formatFileSize = useCallback((bytes: number | null): string => {
+    if (bytes === null || bytes === undefined) return '0 B';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }, []);
+
+  // Handle incoming selected or dropped audio file
+  const handleFileSelected = useCallback((file: File) => {
+    if (!file) return;
+    if (file.size > 50 * 1024 * 1024) {
+      setUploadError('音檔檔案過大（請上傳小於 50MB 的音訊檔）');
+      return;
+    }
+    if (previewAudioRef.current) {
+      try {
+        previewAudioRef.current.pause();
+      } catch {}
+    }
+    setIsPreviewAudioPlaying(false);
+
+    setUploadedFile(file);
+    setUploadedFileName(file.name);
+    setUploadedFileSize(file.size);
+    setUploadError(null);
+
+    const objectUrl = URL.createObjectURL(file);
+    setPreviewAudioUrl(objectUrl);
+
+    // Read audio duration from metadata
+    const tempAudio = new Audio(objectUrl);
+    tempAudio.onloadedmetadata = () => {
+      if (tempAudio.duration && isFinite(tempAudio.duration)) {
+        setUploadedAudioDuration(Math.round(tempAudio.duration * 10) / 10);
+      }
+    };
+  }, []);
+
+  // Generate a pentatonic vocal scale WAV audio blob for instant zero-config testing
+  const handleLoadSampleAudio = useCallback(() => {
+    try {
+      const sampleRate = 44100;
+      // 5 notes: C4 (261.63), D4 (293.66), E4 (329.63), G4 (392.00), A4 (440.00)
+      const noteFreqs = [261.63, 293.66, 329.63, 392.0, 440.0];
+      const noteDurSec = 0.55;
+      const restDurSec = 0.15;
+      const totalDurSec = noteFreqs.length * (noteDurSec + restDurSec);
+      const totalSamples = Math.floor(totalDurSec * sampleRate);
+      const pcmData = new Float32Array(totalSamples);
+
+      let offset = 0;
+      for (const freq of noteFreqs) {
+        const noteSamples = Math.floor(noteDurSec * sampleRate);
+        for (let i = 0; i < noteSamples; i++) {
+          const t = i / sampleRate;
+          const attack = Math.min(1, i / (0.04 * sampleRate));
+          const release = Math.min(1, (noteSamples - i) / (0.04 * sampleRate));
+          const env = attack * release;
+          const sample =
+            (Math.sin(2 * Math.PI * freq * t) * 0.6 +
+              Math.sin(2 * Math.PI * freq * 2 * t) * 0.25 +
+              Math.sin(2 * Math.PI * freq * 3 * t) * 0.1) *
+            env *
+            0.5;
+          pcmData[offset + i] = sample;
+        }
+        offset += noteSamples + Math.floor(restDurSec * sampleRate);
+      }
+
+      // Encode into WAV 16-bit PCM Blob
+      const buffer = new ArrayBuffer(44 + totalSamples * 2);
+      const view = new DataView(buffer);
+
+      const writeString = (view: DataView, offset: number, string: string) => {
+        for (let i = 0; i < string.length; i++) {
+          view.setUint8(offset + i, string.charCodeAt(i));
+        }
+      };
+
+      writeString(view, 0, 'RIFF');
+      view.setUint32(4, 36 + totalSamples * 2, true);
+      writeString(view, 8, 'WAVE');
+      writeString(view, 12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true);
+      view.setUint16(22, 1, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * 2, true);
+      view.setUint16(32, 2, true);
+      view.setUint16(34, 16, true);
+      writeString(view, 36, 'data');
+      view.setUint32(40, totalSamples * 2, true);
+
+      let byteOffset = 44;
+      for (let i = 0; i < totalSamples; i++) {
+        const s = Math.max(-1, Math.min(1, pcmData[i]));
+        view.setInt16(byteOffset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+        byteOffset += 2;
+      }
+
+      const blob = new Blob([buffer], { type: 'audio/wav' });
+      const sampleFile = new File([blob], 'vocal-scale-sample.wav', { type: 'audio/wav' });
+      handleFileSelected(sampleFile);
+    } catch (err) {
+      console.error('Failed to generate sample audio:', err);
+    }
+  }, [handleFileSelected]);
+
+  // Toggle previewing the selected audio file before transcription
+  const togglePreviewAudio = useCallback(() => {
+    if (!previewAudioUrl) return;
+    if (!previewAudioRef.current) {
+      previewAudioRef.current = new Audio(previewAudioUrl);
+      previewAudioRef.current.onended = () => setIsPreviewAudioPlaying(false);
+      previewAudioRef.current.onerror = () => setIsPreviewAudioPlaying(false);
+    } else {
+      if (previewAudioRef.current.src !== previewAudioUrl) {
+        previewAudioRef.current.src = previewAudioUrl;
+      }
+    }
+
+    if (isPreviewAudioPlaying) {
+      previewAudioRef.current.pause();
+      setIsPreviewAudioPlaying(false);
+    } else {
+      previewAudioRef.current
+        .play()
+        .then(() => setIsPreviewAudioPlaying(true))
+        .catch(() => setIsPreviewAudioPlaying(false));
+    }
+  }, [previewAudioUrl, isPreviewAudioPlaying]);
+
+  // Execute offline audio file transcription into Numbered Musical Notation
+  const handleStartFileTranscription = useCallback(async () => {
+    if (!uploadedFile) {
+      setUploadError('請先選擇或拖曳人聲音訊檔案');
+      return;
+    }
+    stopAllPipelines();
+    if (previewAudioRef.current) {
+      try {
+        previewAudioRef.current.pause();
+      } catch {}
+    }
+    setIsPreviewAudioPlaying(false);
+
+    setIsTranscribingFile(true);
+    setTranscribeProgress(0);
+    setTranscribeStatusText('準備解析音檔...');
+    setUploadError(null);
+
+    try {
+      const res = await transcribeAudioFile(uploadedFile, {
+        key: activeKey,
+        bpm: activeBpm,
+        timeSignature: activeTimeSignature,
+        grid: quantizeGrid,
+        octaveShift: octaveShiftVal,
+        accidentalPreference: accidentalPref,
+        scaleMode,
+        absorbArticulation,
+        stabilizerStrength,
+        pitchConfig: activePreset.pitchConfig,
+        onsetConfig: activePreset.onsetConfig,
+        onProgress: (pct, status) => {
+          setTranscribeProgress(pct);
+          setTranscribeStatusText(status);
+        },
+      });
+
+      setUploadedWaveformPeaks(res.waveformPeaks);
+      setUploadedAudioDuration(res.audioDurationSec);
+      setRawSegments(res.rawSegments);
+      setTranscriptionResult(res.transcriptionResult);
+      setTranscribedMeasures(res.transcriptionResult.measures);
+      setRecordedAudioUrl(res.audioUrl);
+      setIsTranscribingFile(false);
+      setStep('REVIEW');
+    } catch (err: unknown) {
+      console.error('Audio file transcription error:', err);
+      setIsTranscribingFile(false);
+      setUploadError(
+        err instanceof Error
+          ? `轉譜失敗: ${err.message}`
+          : '無法解碼或辨識此音訊檔案，請確認是否為有效音訊格式 (MP3, WAV, M4A, AAC, OGG, FLAC)。'
+      );
+    }
+  }, [
+    uploadedFile,
+    activeKey,
+    activeBpm,
+    activeTimeSignature,
+    quantizeGrid,
+    octaveShiftVal,
+    accidentalPref,
+    scaleMode,
+    absorbArticulation,
+    stabilizerStrength,
+    activePreset,
+    stopAllPipelines,
+  ]);
+
   // Re-transcribe with adjusted parameters in Review Step
   const handleRetranscribe = useCallback(
     (overrides?: {
@@ -1474,7 +1712,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
     setIsSynthPlaying(false);
     audioEngine.stop();
 
-    if (activeMode === 'hum' && recordedAudioUrl) {
+    if ((activeMode === 'hum' || activeMode === 'upload') && recordedAudioUrl) {
       setIsRawPlaying(true);
       if (!micAudioElementRef.current) {
         micAudioElementRef.current = new Audio(recordedAudioUrl);
@@ -1712,7 +1950,13 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
       <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-200/80 dark:border-zinc-800/80 bg-zinc-50/80 dark:bg-zinc-900/60 backdrop-blur-md flex-wrap gap-3 shrink-0">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/30 text-amber-500 flex items-center justify-center font-black shadow-sm">
-            {activeMode === 'hum' ? <Mic2 className="w-5 h-5" /> : <Keyboard className="w-5 h-5" />}
+            {activeMode === 'hum' ? (
+              <Mic2 className="w-5 h-5" />
+            ) : activeMode === 'upload' ? (
+              <Upload className="w-5 h-5" />
+            ) : (
+              <Keyboard className="w-5 h-5" />
+            )}
           </div>
           <div>
             <div className="flex items-center gap-2">
@@ -1726,7 +1970,9 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
             <p className="text-xs text-zinc-500 dark:text-zinc-400 hidden sm:block">
               {activeMode === 'hum'
                 ? '人聲哼唱收音 · 琴鍵即時對齊音準與參考音'
-                : '琴鍵彈奏 · 螢幕觸控 / 電腦打字 / MIDI 輸入'}
+                : activeMode === 'upload'
+                  ? '上傳人聲歌唱音檔 (MP3/WAV/M4A) · 離線基頻辨識轉寫簡譜'
+                  : '琴鍵彈奏 · 螢幕觸控 / 電腦打字 / MIDI 輸入'}
             </p>
           </div>
         </div>
@@ -1749,6 +1995,24 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
           >
             <Mic2 className="w-3.5 h-3.5" />
             <span>哼唱收音</span>
+          </button>
+
+          <button
+            id="deck-mode-tab-upload"
+            type="button"
+            onClick={() => {
+              stopAllPipelines();
+              setActiveMode('upload');
+              setStep('SETUP');
+            }}
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              activeMode === 'upload'
+                ? 'bg-amber-500 text-zinc-950 font-black shadow-md scale-[1.02]'
+                : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200 hover:bg-zinc-300/40 dark:hover:bg-zinc-800/60'
+            }`}
+          >
+            <Upload className="w-3.5 h-3.5" />
+            <span>音檔轉譜</span>
           </button>
 
           <button
@@ -1791,6 +2055,412 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
         {/* Zero-shift architecture: fixed slots guarantee visual stability         */}
         {/* ======================================================================= */}
         {step !== 'REVIEW' && (
+          activeMode === 'upload' ? (
+            <div className="flex flex-col gap-4 animate-in fade-in duration-200">
+              {/* ── SLOT 1: STATUS / SETUP STRIP (Fixed 64px) ────────────────────── */}
+              <div className="min-h-[64px] flex items-center justify-between px-4 py-2.5 bg-zinc-50 dark:bg-zinc-900/70 border border-zinc-200 dark:border-zinc-800 rounded-2xl flex-wrap gap-2.5 box-border">
+                {/* Left: Quick Params Badges */}
+                <div className="flex items-center gap-2 flex-wrap text-xs">
+                  {/* Key badge */}
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 font-bold">
+                    <span className="text-[10px] text-zinc-400 font-mono">調號</span>
+                    <select
+                      id="deck-upload-key-select"
+                      value={activeKey}
+                      onChange={e => setActiveKey(e.target.value as KeySignature)}
+                      className="bg-transparent text-amber-600 dark:text-amber-400 font-black cursor-pointer outline-hidden"
+                    >
+                      {CHROMATIC_KEYS.map(k => (
+                        <option key={k} value={k} className="bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100">
+                          1 = {k}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Meter badge */}
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 font-bold">
+                    <span className="text-[10px] text-zinc-400 font-mono">拍號</span>
+                    <select
+                      id="deck-upload-time-sig-select"
+                      value={activeTimeSignature}
+                      onChange={e => setActiveTimeSignature(e.target.value as TimeSignature)}
+                      className="bg-transparent text-amber-600 dark:text-amber-400 font-black cursor-pointer outline-hidden"
+                    >
+                      {STANDARD_TIME_SIGNATURES.map(ts => (
+                        <option key={ts.value} value={ts.value} className="bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100">
+                          {ts.label} 拍
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* BPM badge */}
+                  <div className="flex items-center gap-2 px-2.5 py-1 rounded-xl bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 font-bold">
+                    <span className="text-[10px] text-zinc-400 font-mono">速度</span>
+                    <span className="font-mono text-amber-600 dark:text-amber-400 font-black w-8">
+                      {activeBpm}
+                    </span>
+                    <input
+                      id="deck-upload-bpm-slider"
+                      type="range"
+                      min="40"
+                      max="200"
+                      step="1"
+                      value={activeBpm}
+                      onChange={e => setActiveBpm(parseInt(e.target.value, 10))}
+                      className="w-16 sm:w-24 accent-amber-500 h-1.5 bg-zinc-300 dark:bg-zinc-700 rounded-lg cursor-pointer"
+                      title={`速度: ${activeBpm} BPM`}
+                    />
+                  </div>
+
+                  {/* Grid badge */}
+                  <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 font-bold">
+                    <span className="text-[10px] text-zinc-400 font-mono">量化</span>
+                    <select
+                      id="deck-upload-grid-select"
+                      value={quantizeGrid}
+                      onChange={e => setQuantizeGrid(e.target.value as QuantizeGrid)}
+                      className="bg-transparent text-zinc-700 dark:text-zinc-300 font-bold cursor-pointer outline-hidden text-xs"
+                    >
+                      <option value="quarter" className="bg-white dark:bg-zinc-900">¼ 拍 (四分)</option>
+                      <option value="eighth" className="bg-white dark:bg-zinc-900">⅛ 拍 (八分)</option>
+                      <option value="sixteenth" className="bg-white dark:bg-zinc-900">¹/₁₆ 拍 (十六分)</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Right: Advanced Settings Toggle */}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    id="deck-upload-toggle-advanced-btn"
+                    onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                      showAdvancedSettings
+                        ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/40 shadow-xs'
+                        : 'bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-zinc-700 hover:text-zinc-900 dark:hover:text-zinc-200'
+                    }`}
+                  >
+                    <SlidersHorizontal className="w-3.5 h-3.5" />
+                    <span>{showAdvancedSettings ? '收起進階參數' : '進階設定'}</span>
+                    {showAdvancedSettings ? (
+                      <ChevronUp className="w-3.5 h-3.5" />
+                    ) : (
+                      <ChevronDown className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* ADVANCED SETTINGS ACCORDION */}
+              {showAdvancedSettings && (
+                <div className="animate-in fade-in duration-150 flex flex-col gap-4 p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-800">
+                  <div className="flex flex-col gap-3.5">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <span className="text-xs font-black text-zinc-700 dark:text-zinc-300 flex items-center gap-1.5">
+                        <FileAudio className="w-4 h-4 text-amber-500" />
+                        <span>音訊解析模型與聲學防抖</span>
+                      </span>
+                      <span className="text-xs font-mono text-zinc-400">
+                        可針對人聲歌唱或樂器演奏調整切分靈敏度
+                      </span>
+                    </div>
+
+                    {/* Presets Grid */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {INSTRUMENT_PRESETS.map(p => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => setPresetId(p.id)}
+                          className={`flex flex-col p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                            presetId === p.id
+                              ? 'bg-amber-500/15 border-amber-500 text-amber-800 dark:text-amber-300 shadow-xs ring-1 ring-amber-400/40'
+                              : 'bg-white dark:bg-zinc-900/60 border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400 hover:border-zinc-300'
+                          }`}
+                        >
+                          <div className="flex items-center gap-1.5 text-xs font-black">
+                            <span>{p.icon}</span>
+                            <span>{p.nameZh}</span>
+                          </div>
+                          <span className="text-[10px] text-zinc-500 mt-0.5 line-clamp-1">{p.tips}</span>
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Stabilizer and Articulation Settings */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                      <div className="flex items-center gap-2.5">
+                        <span className="text-xs font-bold text-zinc-500 shrink-0">音準防抖平滑:</span>
+                        <input
+                          id="deck-upload-stabilizer-slider"
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.05"
+                          value={stabilizerStrength}
+                          onChange={e => handleStabilizerChange(parseFloat(e.target.value))}
+                          className="accent-amber-500 flex-1 h-2 bg-zinc-300 dark:bg-zinc-700 rounded-lg cursor-pointer"
+                        />
+                        <span className="text-xs font-mono font-bold text-amber-500 w-12 text-right">
+                          {Math.round(stabilizerStrength * 100)}%
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2 bg-white dark:bg-zinc-800 px-3 py-1.5 rounded-xl border border-zinc-200 dark:border-zinc-700">
+                        <span className="text-xs font-bold text-zinc-600 dark:text-zinc-300">
+                          吸收換氣/吐音空隙:
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setAbsorbArticulation(!absorbArticulation)}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                            absorbArticulation
+                              ? 'bg-amber-500 text-zinc-950 font-black'
+                              : 'bg-zinc-200 dark:bg-zinc-700 text-zinc-500'
+                          }`}
+                        >
+                          {absorbArticulation ? '開啟 (平滑相連)' : '關閉 (保留微小休止)'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ── CENTER STAGE: AUDIO FILE DROPZONE & INSPECTION ────────────────── */}
+              <div className="flex flex-col gap-3">
+                {/* Hidden File Input */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.webm,.flac"
+                  className="hidden"
+                  onChange={e => {
+                    if (e.target.files && e.target.files[0]) {
+                      handleFileSelected(e.target.files[0]);
+                    }
+                  }}
+                />
+
+                {!uploadedFile ? (
+                  /* Empty Dropzone Card */
+                  <div
+                    onDragOver={e => {
+                      e.preventDefault();
+                      setIsDraggingFile(true);
+                    }}
+                    onDragLeave={e => {
+                      e.preventDefault();
+                      setIsDraggingFile(false);
+                    }}
+                    onDrop={e => {
+                      e.preventDefault();
+                      setIsDraggingFile(false);
+                      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                        handleFileSelected(e.dataTransfer.files[0]);
+                      }
+                    }}
+                    className={`border-2 border-dashed rounded-3xl p-6 sm:p-8 flex flex-col items-center justify-center text-center transition-all ${
+                      isDraggingFile
+                        ? 'border-amber-500 bg-amber-500/10 scale-[1.01]'
+                        : 'border-zinc-300 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-900/30 hover:border-amber-400 hover:bg-zinc-50/80 dark:hover:bg-zinc-900/60'
+                    }`}
+                  >
+                    <div className="w-14 h-14 rounded-2xl bg-amber-500/15 text-amber-500 flex items-center justify-center mb-3 shadow-inner">
+                      <UploadCloud className="w-7 h-7 stroke-[2.2]" />
+                    </div>
+                    <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
+                      拖曳人聲歌唱音檔至此，或點擊選取檔案
+                    </h3>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 max-w-md">
+                      支援 MP3、WAV、M4A、AAC、OGG、WebM、FLAC 等常見音訊格式 (檔案上限 50MB)
+                    </p>
+
+                    <div className="flex items-center gap-3 mt-5 flex-wrap justify-center">
+                      <button
+                        type="button"
+                        id="deck-browse-audio-file-btn"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-black text-xs shadow-md transition-all active:scale-95 cursor-pointer"
+                      >
+                        <Upload className="w-4 h-4" />
+                        <span>選取音訊檔案</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        id="deck-load-sample-audio-btn"
+                        onClick={handleLoadSampleAudio}
+                        className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 text-xs font-bold shadow-xs transition-all cursor-pointer"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                        <span>載入範例人聲音檔 (1-2-3-5-6 五聲音階)</span>
+                      </button>
+                    </div>
+
+                    <div className="mt-4 px-4 py-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-700 dark:text-amber-300/90 max-w-lg leading-relaxed text-left flex items-start gap-2">
+                      <span className="font-bold shrink-0">💡 錄音建議：</span>
+                      <span>
+                        建議使用無嘈雜伴奏的清唱人聲 (Acapella) 或個人歌唱練習錄音。系統將在瀏覽器內使用高階自相關法即時追蹤基頻並切分音符，安全隱密且不耗伺服器流量。
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  /* File Selected Card */
+                  <div className="flex flex-col gap-3 p-4 sm:p-5 rounded-2xl bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-800">
+                    <div className="flex items-center justify-between flex-wrap gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-12 h-12 rounded-2xl bg-amber-500/20 text-amber-500 flex items-center justify-center shrink-0">
+                          <FileAudio className="w-6 h-6" />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 break-all">
+                            {uploadedFileName}
+                          </h4>
+                          <div className="flex items-center gap-3 text-xs font-mono text-zinc-500 dark:text-zinc-400 mt-0.5">
+                            <span>{formatFileSize(uploadedFileSize)}</span>
+                            <span>•</span>
+                            <span>
+                              {uploadedAudioDuration ? `${uploadedAudioDuration} 秒` : '長度讀取中...'}
+                            </span>
+                            <span>•</span>
+                            <span className="text-emerald-500 font-bold">已解碼就緒</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          id="deck-preview-audio-btn"
+                          onClick={togglePreviewAudio}
+                          className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                            isPreviewAudioPlaying
+                              ? 'bg-rose-500 text-white shadow-sm'
+                              : 'bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700 hover:text-zinc-900 dark:hover:text-zinc-100'
+                          }`}
+                        >
+                          {isPreviewAudioPlaying ? (
+                            <>
+                              <Pause className="w-3.5 h-3.5" />
+                              <span>暫停試聽</span>
+                            </>
+                          ) : (
+                            <>
+                              <Play className="w-3.5 h-3.5" />
+                              <span>試聽原音</span>
+                            </>
+                          )}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          className="px-3.5 py-2 rounded-xl bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200 text-xs font-bold transition-colors cursor-pointer"
+                        >
+                          更換音檔
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Transcription Progress State */}
+                    {isTranscribingFile && (
+                      <div className="mt-2 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex flex-col gap-2 animate-in fade-in">
+                        <div className="flex items-center justify-between text-xs font-bold text-amber-700 dark:text-amber-300">
+                          <div className="flex items-center gap-2">
+                            <RefreshCw className="w-4 h-4 animate-spin text-amber-500" />
+                            <span>{transcribeStatusText || '音訊基頻分析與量化中...'}</span>
+                          </div>
+                          <span className="font-mono text-sm font-black">{transcribeProgress}%</span>
+                        </div>
+                        <div className="w-full bg-zinc-200 dark:bg-zinc-800 rounded-full h-2 overflow-hidden">
+                          <div
+                            className="bg-gradient-to-r from-amber-500 to-amber-400 h-full rounded-full transition-all duration-150"
+                            style={{ width: `${Math.max(5, transcribeProgress)}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Upload Error Banner */}
+                {uploadError && (
+                  <div className="flex items-center justify-between p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs">
+                    <div className="flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                      <span className="font-bold">{uploadError}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setUploadError(null)}
+                      className="px-2 py-1 rounded-md bg-rose-500/20 hover:bg-rose-500/30 font-bold transition-colors cursor-pointer"
+                    >
+                      清除
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* ── SLOT 4: PERSISTENT PIANO BED ─────────────────────────────────── */}
+              <div id="deck-upload-piano-bed-slot" className="flex flex-col gap-2">
+                <PianoBed
+                  activeKey={activeKey}
+                  accidentalPreference={accidentalPref}
+                  octaveBedView={octaveBedView}
+                  onOctaveBedViewChange={setOctaveBedView}
+                  activeMidiSet={activeMidiSet}
+                  detectedPitchMidi={null}
+                  onNoteDown={handlePianoNoteDown}
+                  onNoteUp={handlePianoNoteUp}
+                  mode="align"
+                  octaveShiftVal={octaveShiftVal}
+                />
+              </div>
+
+              {/* ── SLOT 5: BOTTOM ACTION ROW ────────────────────────────────────── */}
+              <div className="flex items-center justify-between pt-1 min-h-[52px]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    stopAllPipelines();
+                    setActiveMode('hum');
+                    setStep('SETUP');
+                  }}
+                  className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 text-xs font-bold hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
+                >
+                  <Mic2 className="w-3.5 h-3.5 text-amber-500" />
+                  <span>改用麥克風哼唱</span>
+                </button>
+
+                <button
+                  id="deck-start-upload-transcription-btn"
+                  type="button"
+                  disabled={!uploadedFile || isTranscribingFile}
+                  onClick={handleStartFileTranscription}
+                  className={`flex items-center gap-2 px-7 py-3 rounded-2xl font-black text-sm shadow-md transition-all active:scale-95 cursor-pointer ${
+                    !uploadedFile || isTranscribingFile
+                      ? 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600 cursor-not-allowed shadow-none'
+                      : 'bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-zinc-950 shadow-amber-500/20 ring-1 ring-amber-400/50'
+                  }`}
+                >
+                  {isTranscribingFile ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin text-zinc-950" />
+                      <span>轉譜中 ({transcribeProgress}%)...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-4 h-4 stroke-[2.5]" />
+                      <span>開始解析音檔並轉寫簡譜 (Transcribe Audio)</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          ) : (
           <div className="flex flex-col gap-4 animate-in fade-in duration-200">
 
             {/* ── SLOT 1: STATUS / SETUP STRIP (Fixed 64px) ────────────────────── */}
@@ -2482,6 +3152,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
             </div>
 
           </div>
+          )
         )}
 
 
@@ -2517,7 +3188,13 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
                   }`}
                 >
                   {isRawPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                  <span>{activeMode === 'hum' ? '試聽原始人聲' : '試聽原始演奏'}</span>
+                  <span>
+                    {activeMode === 'hum'
+                      ? '試聽原始人聲'
+                      : activeMode === 'upload'
+                        ? '試聽上傳原音'
+                        : '試聽原始演奏'}
+                  </span>
                 </button>
 
                 <button
@@ -2663,7 +3340,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
                 className="flex items-center gap-1.5 px-4 py-2.5 text-xs font-bold text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded-xl transition-colors cursor-pointer"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
-                <span>放棄重錄</span>
+                <span>{activeMode === 'upload' ? '重新選擇音檔' : '放棄重錄'}</span>
               </button>
 
               <button

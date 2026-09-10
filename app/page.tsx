@@ -33,14 +33,15 @@ import {
   ListMusic,
   Volume2,
   Plus,
+  Upload,
 } from 'lucide-react';
 
-export type StudioFeatureMode = 'hum' | 'keyboard';
+export type StudioFeatureMode = 'hum' | 'keyboard' | 'upload';
 
 interface SavedTranscriptionTake {
   id: string;
   timestamp: number;
-  source: 'hum' | 'keyboard';
+  source: 'hum' | 'keyboard' | 'upload';
   title: string;
   song: Song;
   notesCount: number;
@@ -268,7 +269,7 @@ export default function Home() {
           id: 'take-' + Date.now(),
           timestamp: Date.now(),
           source: activeFeature,
-          title: `${activeFeature === 'hum' ? '哼唱收音' : '鍵盤彈奏'} - ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`,
+          title: `${activeFeature === 'hum' ? '哼唱收音' : activeFeature === 'upload' ? '音檔轉譜' : '鍵盤彈奏'} - ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`,
           song: newSong,
           notesCount: finalMeasures.reduce((sum, m) => sum + (m.notes?.length || 0), 0),
           measuresCount: finalMeasures.length,
@@ -487,23 +488,37 @@ export default function Home() {
         <div className="flex items-center justify-between p-4 rounded-2xl bg-zinc-900/60 border border-zinc-800/80 backdrop-blur-xs flex-wrap gap-3">
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20">
-              {activeFeature === 'hum' ? <Mic2 className="w-5 h-5" /> : <Keyboard className="w-5 h-5" />}
+              {activeFeature === 'hum' ? (
+                <Mic2 className="w-5 h-5" />
+              ) : activeFeature === 'upload' ? (
+                <Upload className="w-5 h-5" />
+              ) : (
+                <Keyboard className="w-5 h-5" />
+              )}
             </div>
             <div>
               <h2 className="text-sm sm:text-base font-extrabold text-zinc-100 flex items-center gap-2">
                 <span>
                   {activeFeature === 'hum'
                     ? '人聲哼唱與實體樂器收音轉譜'
-                    : '螢幕觸控 / 電腦打字 / MIDI 鍵盤彈奏轉譜'}
+                    : activeFeature === 'upload'
+                      ? '上傳人聲歌唱音檔解析轉寫簡譜'
+                      : '螢幕觸控 / 電腦打字 / MIDI 鍵盤彈奏轉譜'}
                 </span>
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-mono font-bold">
-                  {activeFeature === 'hum' ? 'MICROPHONE / VOCAL PITCH ENGINE' : 'KEYBOARD & WEB MIDI ENGINE'}
+                  {activeFeature === 'hum'
+                    ? 'MICROPHONE / VOCAL PITCH ENGINE'
+                    : activeFeature === 'upload'
+                      ? 'AUDIO FILE / OFFLINE VOCAL TRANSCRIBER'
+                      : 'KEYBOARD & WEB MIDI ENGINE'}
                 </span>
               </h2>
               <p className="text-xs text-zinc-400 mt-0.5">
                 {activeFeature === 'hum'
                   ? '佩戴耳機以清晰「噠/啦」唱音或吹奏笛子，系統將自動進行基頻音高偵測、音頭切分與節奏量化。'
-                  : '使用螢幕鋼琴、電腦鍵盤 (A~K 鍵為 1~7 音) 或插入 USB/藍牙 MIDI 琴鍵彈奏轉寫。'}
+                  : activeFeature === 'upload'
+                    ? '支援 MP3/WAV/M4A 等音訊格式，離線高精確度基頻萃取與簡譜對齊，支援自訂調號與速度。'
+                    : '使用螢幕鋼琴、電腦鍵盤 (A~K 鍵為 1~7 音) 或插入 USB/藍牙 MIDI 琴鍵彈奏轉寫。'}
               </p>
             </div>
           </div>
@@ -786,6 +801,8 @@ export default function Home() {
                       <span className="text-xs font-bold text-zinc-200 flex items-center gap-1.5">
                         {take.source === 'hum' ? (
                           <Mic2 className="w-3.5 h-3.5 text-amber-400" />
+                        ) : take.source === 'upload' ? (
+                          <Upload className="w-3.5 h-3.5 text-amber-400" />
                         ) : (
                           <Keyboard className="w-3.5 h-3.5 text-amber-400" />
                         )}
