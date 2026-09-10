@@ -78,10 +78,15 @@ import {
   UploadCloud,
   AlertCircle,
   RefreshCw,
+  Zap,
+  Gauge,
+  Compass,
 } from 'lucide-react';
 import {
   transcribeAudioFile,
   type AudioFileTranscriptionResult,
+  type TempoEstimationResult,
+  type TranscriptionEngine,
 } from '@/lib/pitch/audioFileTranscriber';
 
 export type StudioTranscriptionMode = 'hum' | 'upload' | 'keyboard';
@@ -380,6 +385,11 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
   const [isRawPlaying, setIsRawPlaying] = useState<boolean>(false);
   const [rawPlaybackProgress, setRawPlaybackProgress] = useState<number>(0);
   const [isSynthPlaying, setIsSynthPlaying] = useState<boolean>(false);
+  const [detectedTempoResult, setDetectedTempoResult] = useState<TempoEstimationResult | null>(null);
+  const [transcriptionEngineUsed, setTranscriptionEngineUsed] = useState<'basic-pitch' | 'dsp-yin'>('basic-pitch');
+  const [autoDetectBpmEnabled, setAutoDetectBpmEnabled] = useState<boolean>(true);
+  const [alignDownbeatEnabled, setAlignDownbeatEnabled] = useState<boolean>(true);
+  const [selectedEngineMode, setSelectedEngineMode] = useState<TranscriptionEngine>('auto');
 
   // =========================================================================
   // REFS & ENGINES
@@ -1563,6 +1573,9 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
       const res = await transcribeAudioFile(uploadedFile, {
         key: activeKey,
         bpm: activeBpm,
+        autoDetectBpm: autoDetectBpmEnabled,
+        alignDownbeat: alignDownbeatEnabled,
+        engine: selectedEngineMode,
         timeSignature: activeTimeSignature,
         grid: quantizeGrid,
         octaveShift: octaveShiftVal,
@@ -1584,6 +1597,13 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
       setTranscriptionResult(res.transcriptionResult);
       setTranscribedMeasures(res.transcriptionResult.measures);
       setRecordedAudioUrl(res.audioUrl);
+      if (res.tempoEstimation) {
+        setDetectedTempoResult(res.tempoEstimation);
+        if (autoDetectBpmEnabled && res.tempoEstimation.confidence >= 0.4) {
+          setActiveBpm(res.tempoEstimation.bpm);
+        }
+      }
+      setTranscriptionEngineUsed(res.engineUsed);
       setIsTranscribingFile(false);
       setStep('REVIEW');
     } catch (err: unknown) {
@@ -1599,6 +1619,9 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
     uploadedFile,
     activeKey,
     activeBpm,
+    autoDetectBpmEnabled,
+    alignDownbeatEnabled,
+    selectedEngineMode,
     activeTimeSignature,
     quantizeGrid,
     octaveShiftVal,
@@ -1619,6 +1642,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
       allowTriplets?: boolean;
       filterOneFingerGaps?: boolean;
       oneFingerMaxGapMs?: number;
+      bpm?: number;
     }) => {
       const segs = rawSegments;
       if (segs.length === 0) return;
@@ -1639,6 +1663,11 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
         }
       }
 
+      const newBpm = overrides?.bpm ?? activeBpm;
+      if (overrides?.bpm && overrides.bpm !== activeBpm) {
+        setActiveBpm(overrides.bpm);
+      }
+
       const newGrid = overrides?.grid ?? quantizeGrid;
       const newOct = overrides?.octaveShift ?? octaveShiftVal;
       const newAcc = overrides?.accidentalPreference ?? accidentalPref;
@@ -1649,7 +1678,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
       if (activeMode === 'keyboard') {
         const result = transcribeKeyboardSegmentsToMeasures(segs, {
           key: activeKey,
-          bpm: activeBpm,
+          bpm: newBpm,
           timeSignature: activeTimeSignature,
           grid: newGrid,
           allowTriplets: newTriplets,
@@ -1664,7 +1693,7 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
       } else {
         const result = transcribeAudioSegmentsToMeasures(segs, {
           key: activeKey,
-          bpm: activeBpm,
+          bpm: newBpm,
           timeSignature: activeTimeSignature,
           grid: newGrid,
           octaveShift: newOct,
@@ -2300,16 +2329,17 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
                       </button>
                     </div>
 
-                    <div className="mt-4 px-4 py-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-700 dark:text-amber-300/90 max-w-lg leading-relaxed text-left flex items-start gap-2">
-                      <span className="font-bold shrink-0">💡 錄音建議：</span>
+                    <div className="mt-4 px-4 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-700 dark:text-amber-300/90 max-w-lg leading-relaxed text-left flex items-start gap-2">
+                      <Sparkles className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
                       <span>
-                        建議使用無嘈雜伴奏的清唱人聲 (Acapella) 或個人歌唱練習錄音。系統將在瀏覽器內使用高階自相關法即時追蹤基頻並切分音符，安全隱密且不耗伺服器流量。
+                        <strong className="font-bold">Spotify Basic Pitch 類神經轉譜已就緒：</strong>
+                        結合深度學習音高與音頭偵測（抗人聲滑音、抖動與八度音誤判）及 Smart Tempo Tracker 智慧速度與強弱起拍對齊。支援 iPad 與本機離線運算。
                       </span>
                     </div>
                   </div>
                 ) : (
                   /* File Selected Card */
-                  <div className="flex flex-col gap-3 p-4 sm:p-5 rounded-2xl bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-800">
+                  <div className="flex flex-col gap-3.5 p-4 sm:p-5 rounded-2xl bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-800">
                     <div className="flex items-center justify-between flex-wrap gap-3">
                       <div className="flex items-center gap-3">
                         <div className="w-12 h-12 rounded-2xl bg-amber-500/20 text-amber-500 flex items-center justify-center shrink-0">
@@ -2361,6 +2391,74 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
                           className="px-3.5 py-2 rounded-xl bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200 text-xs font-bold transition-colors cursor-pointer"
                         >
                           更換音檔
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* AI Engine & Smart Tempo Settings Strip */}
+                    <div className="pt-2 border-t border-zinc-200 dark:border-zinc-800 flex items-center justify-between flex-wrap gap-2 text-xs">
+                      {/* Engine Selector */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-zinc-500 dark:text-zinc-400 font-bold">轉譜核心:</span>
+                        <div className="inline-flex rounded-xl bg-zinc-200 dark:bg-zinc-800 p-0.5 border border-zinc-300 dark:border-zinc-700">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedEngineMode('auto')}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                              selectedEngineMode === 'auto' || selectedEngineMode === 'basic-pitch'
+                                ? 'bg-amber-500 text-zinc-950 font-black shadow-xs'
+                                : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200'
+                            }`}
+                            title="Spotify Basic Pitch 深度學習類神經網路 (抗滑音、抗八度跳音)"
+                          >
+                            <span className="flex items-center gap-1">
+                              <Zap className="w-3 h-3" />
+                              <span>Basic Pitch 類神經 (推薦)</span>
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedEngineMode('dsp')}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                              selectedEngineMode === 'dsp'
+                                ? 'bg-amber-500 text-zinc-950 font-black shadow-xs'
+                                : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200'
+                            }`}
+                            title="傳統 DSP YIN 基頻分析"
+                          >
+                            <span>DSP YIN 傳統</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Smart Tempo & Downbeat Toggles */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => setAutoDetectBpmEnabled(!autoDetectBpmEnabled)}
+                          className={`flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-bold transition-all cursor-pointer ${
+                            autoDetectBpmEnabled
+                              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400'
+                              : 'bg-zinc-200 dark:bg-zinc-800 border-transparent text-zinc-400'
+                          }`}
+                          title="自動偵測音檔速度 (BPM) 並套用至量化網格"
+                        >
+                          <Gauge className="w-3 h-3" />
+                          <span>自動速度偵測 {autoDetectBpmEnabled ? '開' : '關'}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setAlignDownbeatEnabled(!alignDownbeatEnabled)}
+                          className={`flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-bold transition-all cursor-pointer ${
+                            alignDownbeatEnabled
+                              ? 'bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400'
+                              : 'bg-zinc-200 dark:bg-zinc-800 border-transparent text-zinc-400'
+                          }`}
+                          title="自動對齊歌曲第 1 拍強拍或弱起小節 (Anacrusis)"
+                        >
+                          <Compass className="w-3 h-3" />
+                          <span>強弱起拍對齊 {alignDownbeatEnabled ? '開' : '關'}</span>
                         </button>
                       </div>
                     </div>
@@ -3160,56 +3258,103 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
         {step === 'REVIEW' && (
           <div className="flex flex-col gap-6 animate-in fade-in duration-200">
             {/* Review Header Banner */}
-            <div className="flex items-center justify-between p-4 rounded-2xl bg-zinc-900 border border-zinc-800 flex-wrap gap-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold">
-                  <Check className="w-4 h-4 stroke-[3]" />
+            <div className="flex flex-col gap-3 p-4 rounded-2xl bg-zinc-900 border border-zinc-800">
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold">
+                    <Check className="w-4 h-4 stroke-[3]" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="text-sm font-extrabold text-zinc-100">
+                        轉寫完成 · 簡譜成果檢視
+                      </h3>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                        <Zap className="w-3 h-3" />
+                        <span>{transcriptionEngineUsed === 'basic-pitch' ? 'Spotify Basic Pitch 類神經轉譜' : 'DSP YIN 基頻轉譜'}</span>
+                      </span>
+                    </div>
+                    <span className="text-xs font-mono text-zinc-400">
+                      1={activeKey} · 速度 {activeBpm} BPM · {transcribedMeasures.length} 小節 · 共{' '}
+                      {transcribedMeasures.reduce((sum, m) => sum + (m.notes?.length || 0), 0)} 個音符
+                    </span>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="text-sm font-extrabold text-zinc-100">
-                    轉寫完成 · 簡譜成果檢視
-                  </h3>
-                  <span className="text-xs font-mono text-zinc-400">
-                    1={activeKey} · {transcribedMeasures.length} 小節 · 共{' '}
-                    {transcribedMeasures.reduce((sum, m) => sum + (m.notes?.length || 0), 0)} 個音符
-                  </span>
+
+                {/* Dual-Track Audio Players */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={handleToggleRawPlay}
+                    className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      isRawPlaying
+                        ? 'bg-rose-500 text-white'
+                        : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700'
+                    }`}
+                  >
+                    {isRawPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                    <span>
+                      {activeMode === 'hum'
+                        ? '試聽原始人聲'
+                        : activeMode === 'upload'
+                          ? '試聽上傳原音'
+                          : '試聽原始演奏'}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleToggleSynthPlay}
+                    className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                      isSynthPlaying
+                        ? 'bg-rose-500 text-white'
+                        : 'bg-amber-500 hover:bg-amber-400 text-zinc-950'
+                    }`}
+                  >
+                    {isSynthPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 fill-current" />}
+                    <span>試聽轉譜樂音 (Synth)</span>
+                  </button>
                 </div>
               </div>
 
-              {/* Dual-Track Audio Players */}
-              <div className="flex items-center gap-2 flex-wrap">
-                <button
-                  type="button"
-                  onClick={handleToggleRawPlay}
-                  className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                    isRawPlaying
-                      ? 'bg-rose-500 text-white'
-                      : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700'
-                  }`}
-                >
-                  {isRawPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                  <span>
-                    {activeMode === 'hum'
-                      ? '試聽原始人聲'
-                      : activeMode === 'upload'
-                        ? '試聽上傳原音'
-                        : '試聽原始演奏'}
-                  </span>
-                </button>
+              {/* Smart Tempo Tracker Result Strip */}
+              {detectedTempoResult && (
+                <div className="pt-2.5 border-t border-zinc-800 flex items-center justify-between flex-wrap gap-2 text-xs">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <div className="flex items-center gap-1.5 text-zinc-300">
+                      <Gauge className="w-3.5 h-3.5 text-amber-400" />
+                      <span>AI 偵測速度:</span>
+                      <span className="font-mono font-black text-amber-400 text-sm">
+                        {detectedTempoResult.bpm} BPM
+                      </span>
+                      <span className="text-[11px] text-zinc-400">
+                        (信心度 {Math.round(detectedTempoResult.confidence * 100)}%)
+                      </span>
+                    </div>
 
-                <button
-                  type="button"
-                  onClick={handleToggleSynthPlay}
-                  className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
-                    isSynthPlaying
-                      ? 'bg-rose-500 text-white'
-                      : 'bg-amber-500 hover:bg-amber-400 text-zinc-950'
-                  }`}
-                >
-                  {isSynthPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 fill-current" />}
-                  <span>試聽轉譜樂音 (Synth)</span>
-                </button>
-              </div>
+                    <div className="flex items-center gap-1.5 text-zinc-300">
+                      <Compass className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>拍點對齊:</span>
+                      <span className="font-bold text-zinc-200">
+                        {detectedTempoResult.isPickup
+                          ? `弱起小節 (前置 ${detectedTempoResult.pickupBeats} 拍)`
+                          : '正拍對齊 (Beat 1)'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {activeBpm !== detectedTempoResult.bpm && (
+                    <button
+                      type="button"
+                      onClick={() => handleRetranscribe({ bpm: detectedTempoResult.bpm })}
+                      className="flex items-center gap-1 px-3 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-bold transition-all cursor-pointer"
+                    >
+                      <Sparkles className="w-3 h-3" />
+                      <span>採用 AI 偵測速度 ({detectedTempoResult.bpm} BPM)</span>
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Visual Numbered Notation Score Preview */}
@@ -3267,6 +3412,37 @@ export const ScoreTranscriptionDeck: React.FC<ScoreTranscriptionDeckProps> = ({
                     className="px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 cursor-pointer"
                   >
                     +1 八度
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2 sm:border-l sm:border-zinc-800 sm:pl-4">
+                  <span className="font-bold text-zinc-400">速度量化 (BPM):</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = Math.max(40, activeBpm - 5);
+                      setActiveBpm(next);
+                      handleRetranscribe({ bpm: next });
+                    }}
+                    className="px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 cursor-pointer"
+                    title="降低 5 BPM 並重新量化"
+                  >
+                    -5
+                  </button>
+                  <span className="font-mono font-bold text-amber-400 px-1">
+                    {activeBpm}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = Math.min(240, activeBpm + 5);
+                      setActiveBpm(next);
+                      handleRetranscribe({ bpm: next });
+                    }}
+                    className="px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 cursor-pointer"
+                    title="提高 5 BPM 並重新量化"
+                  >
+                    +5
                   </button>
                 </div>
 
